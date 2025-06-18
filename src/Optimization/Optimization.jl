@@ -155,14 +155,37 @@ function simp_optimize(
         )
         
         # Update densities using OC
+        # densities = optimality_criteria_update(
+        #     densities, 
+        #     filtered_sensitivities,
+        #     params.volume_fraction,
+        #     calculate_volume(grid),
+        #     params.move_limit,
+        #     params.damping
+        # )
+
         densities = optimality_criteria_update(
             densities, 
             filtered_sensitivities,
             params.volume_fraction,
-            calculate_volume(grid),
+            grid,  # ← Předávat celý grid object
             params.move_limit,
             params.damping
         )
+        
+        # Také přidejte lepší diagnostiku po OC update:
+        current_volume = calculate_volume(grid, densities)
+        current_volume_fraction = current_volume / calculate_volume(grid)
+        
+        print_data("Volume fraction after OC: $(current_volume_fraction)")
+        print_data("Target volume fraction: $(params.volume_fraction)")
+        print_data("Volume constraint error: $(abs(current_volume_fraction - params.volume_fraction))")
+        
+        # Volitelně: přidejte check pro extrémní hodnoty
+        if current_volume_fraction < 0.01 || current_volume_fraction > 0.99
+            print_warning("Extreme volume fraction detected: $current_volume_fraction")
+            print_warning("This may indicate OC algorithm instability")
+        end
         
         # Check convergence
         change = maximum(abs.(densities - old_densities))
