@@ -2,7 +2,7 @@
 
 julia_version = "1.11.5"
 manifest_format = "2.0"
-project_hash = "f2da09f8b21cd1945454fa0bb49e6a45fcd44185"
+project_hash = "0040c0435110fff1d1c25c48ac27185704192cae"
 
 [[deps.AbaqusReader]]
 deps = ["Logging", "Nullables"]
@@ -211,6 +211,11 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "92f65c4d78ce8cdbb6b68daf88889950b0a99d11"
 uuid = "e33a78d0-f292-5ffc-b300-72abe9b543c8"
 version = "2.12.1+0"
+
+[[deps.InteractiveUtils]]
+deps = ["Markdown"]
+uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+version = "1.11.0"
 
 [[deps.IrrationalConstants]]
 git-tree-sha1 = "e2222959fbc6c19554dc15174c81bf7bf3aa691c"
@@ -604,6 +609,11 @@ deps = ["ForwardDiff", "LinearAlgebra", "PrecompileTools", "SIMD", "StaticArrays
 git-tree-sha1 = "399ec4c46786c47380121f8a6497c65b89f0573f"
 uuid = "48a634ad-e948-5137-8d70-aa71f2a747f4"
 version = "1.16.2"
+
+[[deps.Test]]
+deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
+uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+version = "1.11.0"
 
 [[deps.TranscodingStreams]]
 git-tree-sha1 = "0c45878dcfdcfa8480052b6ab162cdd138781742"
