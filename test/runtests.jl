@@ -1,3 +1,5 @@
+using Test
+using Ferrite
 using EasySIMP
 using EasySIMP.MeshImport
 using EasySIMP.FiniteElementAnalysis
