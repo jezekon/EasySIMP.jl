@@ -66,7 +66,8 @@ using EasySIMP.Utils
         # Run optimization
         results = simp_optimize(
             grid, dh, cellvalues, material_model,
-            [(f,)], [ch_fixed], opt_params
+            [(dh, collect(force_nodes), [0.0, -1.0, 0.0])], [ch_fixed], opt_params
+            # [(f,)], [ch_fixed], opt_params
         )
         
         print_success("Optimization completed!")
