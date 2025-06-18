@@ -83,7 +83,6 @@ Main SIMP topology optimization function.
 - `grid`: Ferrite Grid object
 - `dh`: DofHandler
 - `cellvalues`: CellValues for integration
-- `material_params`: Material parameters (λ, μ)
 - `forces`: Applied forces
 - `boundary_conditions`: Boundary conditions
 - `params`: OptimizationParameters
@@ -95,7 +94,6 @@ function simp_optimize(
     grid::Grid,
     dh::DofHandler,
     cellvalues,
-    material_params,
     forces,
     boundary_conditions,
     params::OptimizationParameters

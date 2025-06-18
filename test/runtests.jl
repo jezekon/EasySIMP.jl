@@ -58,16 +58,15 @@ using EasySIMP.Utils
             ν = ν,
             p = 3.0,
             volume_fraction = 0.4,
-            max_iterations = 50,
+            max_iterations = 10,
             tolerance = 0.01,
             filter_radius = 1.5
         )
         
         # Run optimization
         results = simp_optimize(
-            grid, dh, cellvalues, material_model,
+            grid, dh, cellvalues,
             [(dh, collect(force_nodes), [0.0, -1.0, 0.0])], [ch_fixed], opt_params
-            # [(f,)], [ch_fixed], opt_params
         )
         
         print_success("Optimization completed!")
