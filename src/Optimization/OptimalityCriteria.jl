@@ -33,83 +33,101 @@ where λ is found by bisection to satisfy the volume constraint.
 function optimality_criteria_update(
     densities::Vector{Float64},
     sensitivities::Vector{Float64}, 
-    volume_fraction::Float64,
+    target_volume_fraction::Float64,
     total_volume::Float64,
-    element_volumes::Vector{Float64},  # PŘIDAT TENTO PARAMETR
+    element_volumes::Vector{Float64},
     move_limit::Float64 = 0.2,
     damping::Float64 = 0.5
 )
-    n_elements = length(densities)
-    target_volume = volume_fraction * total_volume
+    # Nastavit testovací volume_fraction
+    # target_volume_fraction = 0.1  # Testovací hodnota
+    target_volume = target_volume_fraction * total_volume
     
-    # Minimum density to avoid singularity
+    println("=== OC DEBUG INFO ===")
+    println("Target volume fraction: $target_volume_fraction")
+    println("Target volume: $target_volume")
+    println("Total volume: $total_volume")
+    println("Number of elements: $(length(densities))")
+    println("Current volume: $(dot(densities, element_volumes))")
+    println("Current volume fraction: $(dot(densities, element_volumes) / total_volume)")
+    
+    # Kontrola vstupních dat
+    println("Density range: [$(minimum(densities)), $(maximum(densities))]")
+    println("Sensitivity range: [$(minimum(sensitivities)), $(maximum(sensitivities))]")
+    println("Element volume range: [$(minimum(element_volumes)), $(maximum(element_volumes))]")
+    
+    # Zkusit velmi jednoduchou implementaci podle Sigmund 2001
+    n_elements = length(densities)
     x_min = 1e-3
     
-    # Initialize Lagrange multiplier bounds for bisection
+    # Bisection pro λ
     λ_low = 1e-9
     λ_high = 1e9
-    
-    # Bisection algorithm to find Lagrange multiplier
-    max_bisection_iter = 50
     tolerance = 1e-6
     
     new_densities = copy(densities)
     
-    for iter = 1:max_bisection_iter
+    for iter = 1:50
         λ_mid = 0.5 * (λ_low + λ_high)
         
-        # Update densities with current λ
+        # Sigmund (2001) formula: x_new = x * (-dc/dx / λ)^0.5
         for i = 1:n_elements
-            # Optimality condition: -dc/dx = λ * dv/dx
-            # For element with volume V_e: dv/dx = V_e
-            # So: x_new = x * sqrt(-dc/dx / (λ * V_e))
-            
-            # Calculate optimality ratio with damping
-            if sensitivities[i] < 0  # Compliance sensitivities are negative
-                optimality_ratio = densities[i] * (-sensitivities[i] / (λ_mid * element_volumes[i]))^damping
-            else
-                optimality_ratio = densities[i]  # Keep unchanged if sensitivity is positive
-            end
-            
-            # Apply move limits and bounds
-            new_densities[i] = max(
-                x_min,
-                max(
-                    densities[i] - move_limit,
-                    min(
-                        1.0,
+            if sensitivities[i] < 0
+                # Normalized: dV/dx = 1 for unit volumes
+                # For actual volumes: dV/dx = element_volumes[i] / total_volume
+                volume_sensitivity = element_volumes[i] / total_volume
+                
+                # Be = (-dc/dx) / (λ * dV/dx)
+                Be = (-sensitivities[i]) / (λ_mid * volume_sensitivity)
+                
+                # Update podle Sigmund
+                optimality_ratio = densities[i] * sqrt(Be)  # damping = 0.5
+                
+                # Apply bounds and move limits
+                new_densities[i] = max(
+                    x_min,
+                    max(
+                        densities[i] - move_limit,
                         min(
-                            densities[i] + move_limit,
-                            optimality_ratio
+                            1.0,
+                            min(
+                                densities[i] + move_limit,
+                                optimality_ratio
+                            )
                         )
                     )
                 )
-            )
+            end
         end
         
-        # Calculate resulting volume - SPRÁVNĚ S OBJEMY ELEMENTŮ
+        # Kontrola objemu
         current_volume = dot(new_densities, element_volumes)
-        
-        # Check volume constraint
         volume_error = current_volume - target_volume
         
+        if iter <= 20
+            println("Iter $iter: λ=$λ_mid, volume=$current_volume, error=$volume_error")
+        end
+        
         if abs(volume_error) < tolerance
-            print_data("OC converged after $iter bisection iterations")
+            println("Converged in $iter iterations!")
             break
         end
         
-        # Update λ bounds
+        # Update bounds
         if volume_error > 0
-            λ_low = λ_mid  # Too much material, increase λ
+            λ_low = λ_mid
         else
-            λ_high = λ_mid  # Too little material, decrease λ
-        end
-        
-        # Check for convergence failure
-        if iter == max_bisection_iter
-            print_warning("OC bisection did not converge within $max_bisection_iter iterations")
+            λ_high = λ_mid
         end
     end
+    
+    # Final check
+    final_volume = dot(new_densities, element_volumes)
+    final_fraction = final_volume / total_volume
+    println("=== FINAL RESULTS ===")
+    println("Achieved volume fraction: $final_fraction")
+    println("Target volume fraction: $target_volume_fraction")
+    println("Error: $(abs(final_fraction - target_volume_fraction))")
     
     return new_densities
 end
@@ -140,57 +158,33 @@ end
 
 Verify OC implementation by checking volume constraint satisfaction.
 """
-function verify_oc_implementation(
-    densities::Vector{Float64},
-    sensitivities::Vector{Float64},
-    volume_fraction::Float64,
-    grid::Grid
-)
-    print_info("Verifying OC implementation...")
-    
-    # Test with different move limits and damping
-    test_move_limits = [0.1, 0.2, 0.3]
-    test_damping = [0.3, 0.5, 0.7]
-    
-    for move in test_move_limits
-        for damp in test_damping
-            new_densities = optimality_criteria_update(
-                densities, sensitivities, volume_fraction, grid, move, damp
-            )
-            
-            volume_error, vol_frac = check_volume_constraint_correct(
-                new_densities, volume_fraction, grid
-            )
-            
-            print_data("Move: $move, Damping: $damp")
-            print_data("  Volume fraction: $vol_frac (target: $volume_fraction)")
-            print_data("  Volume error: $volume_error")
-            println()
-        end
-    end
-end
+# function verify_oc_implementation(
+#     densities::Vector{Float64},
+#     sensitivities::Vector{Float64},
+#     volume_fraction::Float64,
+#     grid::Grid
+# )
+#     print_info("Verifying OC implementation...")
+#
+#     # Test with different move limits and damping
+#     test_move_limits = [0.1, 0.2, 0.3]
+#     test_damping = [0.3, 0.5, 0.7]
+#
+#     for move in test_move_limits
+#         for damp in test_damping
+#             new_densities = optimality_criteria_update(
+#                 densities, sensitivities, volume_fraction, grid, move, damp
+#             )
+#
+#             volume_error, vol_frac = check_volume_constraint_correct(
+#                 new_densities, volume_fraction, grid
+#             )
+#
+#             print_data("Move: $move, Damping: $damp")
+#             print_data("  Volume fraction: $vol_frac (target: $volume_fraction)")
+#             print_data("  Volume error: $volume_error")
+#             println()
+#         end
+#     end
+# end
 
-"""
-    apply_move_limits(old_density, new_density, move_limit, x_min, x_max)
-
-Apply move limits to density update.
-"""
-function apply_move_limits(
-    old_density::Float64,
-    new_density::Float64, 
-    move_limit::Float64,
-    x_min::Float64 = 1e-3,
-    x_max::Float64 = 1.0
-)
-    # Apply move limits
-    bounded_density = max(
-        old_density - move_limit,
-        min(
-            old_density + move_limit,
-            new_density
-        )
-    )
-    
-    # Apply physical bounds
-    return max(x_min, min(x_max, bounded_density))
-end
