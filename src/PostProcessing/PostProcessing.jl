@@ -162,22 +162,19 @@ function export_convergence_history(results_data::ResultsData, filename::String)
         return
     end
     
-    # Create points for line plot
-    points = zeros(3, n_iter)
-    for i = 1:n_iter
-        points[1, i] = i  # Iteration number
-        points[2, i] = 0.0
-        points[3, i] = 0.0
-    end
+    # Create coordinate vectors for line plot
+    x_coords = Float64[i for i in 1:n_iter]
+    y_coords = zeros(Float64, n_iter)
+    z_coords = zeros(Float64, n_iter)
     
     # Create line cells connecting consecutive points
-    cells = []
+    cells = WriteVTK.MeshCell[]
     for i = 1:(n_iter-1)
-        push!(cells, MeshCell(VTKCellTypes.VTK_LINE, [i, i+1]))
+        push!(cells, WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_LINE, [i, i+1]))
     end
     
     # Create VTU file
-    vtk_grid(filename, points, cells) do vtk
+    vtk_grid(filename, x_coords, y_coords, z_coords, cells) do vtk
         # Point data
         vtk["iteration"] = collect(1:n_iter)
         vtk["compliance"] = results_data.compliance_history
@@ -190,23 +187,24 @@ function export_convergence_history(results_data::ResultsData, filename::String)
     end
 end
 
+
 """
     create_vtk_cells(grid)
 
 Convert Ferrite grid cells to VTK format.
 """
 function create_vtk_cells(grid::Grid)
-    cells = []
+    cells = WriteVTK.MeshCell[]  # Properly typed vector
     
     for cell in getcells(grid)
         if cell isa Ferrite.Tetrahedron
-            push!(cells, MeshCell(VTKCellTypes.VTK_TETRA, cell.nodes))
+            push!(cells, WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_TETRA, cell.nodes))
         elseif cell isa Ferrite.Hexahedron
-            push!(cells, MeshCell(VTKCellTypes.VTK_HEXAHEDRON, cell.nodes))
+            push!(cells, WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_HEXAHEDRON, cell.nodes))
         elseif cell isa Ferrite.Triangle
-            push!(cells, MeshCell(VTKCellTypes.VTK_TRIANGLE, cell.nodes))
+            push!(cells, WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_TRIANGLE, cell.nodes))
         elseif cell isa Ferrite.Quadrilateral
-            push!(cells, MeshCell(VTKCellTypes.VTK_QUAD, cell.nodes))
+            push!(cells, WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_QUAD, cell.nodes))
         else
             @warn "Unsupported cell type: $(typeof(cell))"
         end
@@ -214,6 +212,7 @@ function create_vtk_cells(grid::Grid)
     
     return cells
 end
+
 
 """
     extract_nodal_displacements(results_data)
