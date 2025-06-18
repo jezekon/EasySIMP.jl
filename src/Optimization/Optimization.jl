@@ -3,6 +3,7 @@ module Optimization
 using Ferrite
 using SparseArrays
 using LinearAlgebra
+using Printf
 using ..FiniteElementAnalysis
 using ..Utils
 
