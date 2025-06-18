@@ -1,23 +1,23 @@
 """
 OptimalityCriteria.jl
 
-Implementation of Optimality Criteria method for SIMP topology optimization.
-Based on the approach from Bendsøe (1995) and Sigmund (2001).
+Corrected implementation of Optimality Criteria method for SIMP topology optimization.
+Based on Sigmund (2001) 99-line topology optimization code.
 """
 
 export optimality_criteria_update
 
 """
     optimality_criteria_update(densities, sensitivities, volume_fraction, 
-                              total_volume, move_limit, damping)
+                              grid, move_limit, damping)
 
-Update design variables using the Optimality Criteria method.
+Update design variables using the corrected Optimality Criteria method.
 
 # Arguments
 - `densities`: Current density distribution
 - `sensitivities`: Sensitivity of objective function w.r.t. densities  
 - `volume_fraction`: Target volume fraction
-- `total_volume`: Total volume of design domain
+- `grid`: Ferrite Grid object for proper volume calculation
 - `move_limit`: Maximum change in density per iteration (default: 0.2)
 - `damping`: Damping coefficient (default: 0.5)
 
@@ -25,8 +25,8 @@ Update design variables using the Optimality Criteria method.
 - Updated density distribution
 
 # Method
-The OC update follows:
-x_new = max(x_min, max(x - move, min(1, min(x + move, x * sqrt(-dc/dv/λ)))))
+Uses Sigmund's OC formula:
+x_new = max(x_min, max(x - move, min(1, min(x + move, x * sqrt(-dc/λ)))))
 
 where λ is found by bisection to satisfy the volume constraint.
 """
@@ -34,79 +34,85 @@ function optimality_criteria_update(
     densities::Vector{Float64},
     sensitivities::Vector{Float64}, 
     volume_fraction::Float64,
-    total_volume::Float64,
+    grid::Grid,
     move_limit::Float64 = 0.2,
     damping::Float64 = 0.5
 )
     n_elements = length(densities)
+    
+    # Calculate proper total volume using the grid geometry
+    total_volume = calculate_volume(grid)
     target_volume = volume_fraction * total_volume
     
     # Minimum density to avoid singularity
     x_min = 1e-3
     
-    # Initialize Lagrange multiplier bounds for bisection
-    λ_low = 1e-9
-    λ_high = 1e9
+    # Initialize Lagrange multiplier bounds (as in Sigmund 2001)
+    l1 = 0.0
+    l2 = 100000.0
     
-    # Bisection algorithm to find Lagrange multiplier
+    # Bisection algorithm parameters
     max_bisection_iter = 50
-    tolerance = 1e-6
+    tolerance = 1e-4  # Sigmund uses 1e-4
     
     new_densities = copy(densities)
     
+    # Bisection algorithm to find Lagrange multiplier
     for iter = 1:max_bisection_iter
-        λ_mid = 0.5 * (λ_low + λ_high)
+        lmid = 0.5 * (l1 + l2)
         
-        # Update densities with current λ
+        # Update densities using Sigmund's OC formula
         for i = 1:n_elements
-            # Optimality condition: -dc/dx = λ * dv/dx
-            # For unit volume elements: dv/dx = 1
-            # So: x_new = x * sqrt(-dc/dx / λ)
+            x = densities[i]
+            dc = sensitivities[i]
             
-            # Calculate optimality ratio with damping
-            if sensitivities[i] < 0  # Compliance sensitivities are negative
-                optimality_ratio = densities[i] * (-sensitivities[i] / λ_mid)^damping
+            # Sigmund's exact formula: x * sqrt(-dc/λ)
+            if dc < 0  # Compliance sensitivities should be negative
+                optimality_ratio = x * sqrt(-dc / lmid)  # ← Tady je ta oprava!
             else
-                optimality_ratio = densities[i]  # Keep unchanged if sensitivity is positive
+                optimality_ratio = x  # No change if sensitivity is not negative
             end
             
-            # Apply move limits and bounds
+            # Apply move limits (Sigmund's nested min/max)
             new_densities[i] = max(
                 x_min,
                 max(
-                    densities[i] - move_limit,
+                    x - move_limit,
                     min(
                         1.0,
                         min(
-                            densities[i] + move_limit,
-                            optimality_ratio
+                            x + move_limit,
+                            optimality_ratio  # ← Bez dodatečného damping exponentu!
                         )
                     )
                 )
             )
         end
+                
+        # Calculate resulting volume using proper volume calculation
+        current_volume = calculate_volume(grid, new_densities)
         
-        # Calculate resulting volume
-        current_volume = sum(new_densities)  # Assuming unit element volumes
-        
-        # Check volume constraint
+        # Volume constraint error
         volume_error = current_volume - target_volume
         
-        if abs(volume_error) < tolerance
+        # Check for convergence
+        if abs(l2 - l1) < tolerance
             print_data("OC converged after $iter bisection iterations")
             break
         end
         
-        # Update λ bounds
+        # Update Lagrange multiplier bounds
         if volume_error > 0
-            λ_low = λ_mid  # Too much material, increase λ
+            l1 = lmid  # Too much material, increase λ
         else
-            λ_high = λ_mid  # Too little material, decrease λ
+            l2 = lmid  # Too little material, decrease λ
         end
         
         # Check for convergence failure
         if iter == max_bisection_iter
             print_warning("OC bisection did not converge within $max_bisection_iter iterations")
+            print_data("Final volume error: $volume_error")
+            print_data("Current volume: $current_volume, Target: $target_volume")
         end
     end
     
@@ -114,49 +120,58 @@ function optimality_criteria_update(
 end
 
 """
-    calculate_be_ratio(density, sensitivity, lagrange_multiplier, damping)
+    check_volume_constraint_correct(densities, target_volume_fraction, grid)
 
-Calculate the optimality ratio Be for the OC update.
-
-Be = -∂c/∂x / (λ * ∂V/∂x)
-
-For compliance minimization and unit element volumes:
-Be = -sensitivity / λ
+Check volume constraint using proper volume calculation.
 """
-function calculate_be_ratio(
-    density::Float64,
-    sensitivity::Float64, 
-    lagrange_multiplier::Float64,
-    damping::Float64 = 0.5
-)
-    if sensitivity < 0
-        return (-sensitivity / lagrange_multiplier)^damping
-    else
-        return 1.0  # No change if sensitivity is not improving
-    end
-end
-
-"""
-    check_volume_constraint(densities, target_volume_fraction, total_volume)
-
-Check if the volume constraint is satisfied.
-
-# Returns
-- `volume_error`: Difference between current and target volume
-- `volume_fraction`: Current volume fraction
-"""
-function check_volume_constraint(
+function check_volume_constraint_correct(
     densities::Vector{Float64},
     target_volume_fraction::Float64,
-    total_volume::Float64
+    grid::Grid
 )
-    current_volume = sum(densities)  # Assuming unit element volumes
+    total_volume = calculate_volume(grid)
+    current_volume = calculate_volume(grid, densities)
     target_volume = target_volume_fraction * total_volume
     
     volume_error = current_volume - target_volume
     current_volume_fraction = current_volume / total_volume
     
     return volume_error, current_volume_fraction
+end
+
+"""
+    verify_oc_implementation(densities, sensitivities, volume_fraction, grid)
+
+Verify OC implementation by checking volume constraint satisfaction.
+"""
+function verify_oc_implementation(
+    densities::Vector{Float64},
+    sensitivities::Vector{Float64},
+    volume_fraction::Float64,
+    grid::Grid
+)
+    print_info("Verifying OC implementation...")
+    
+    # Test with different move limits and damping
+    test_move_limits = [0.1, 0.2, 0.3]
+    test_damping = [0.3, 0.5, 0.7]
+    
+    for move in test_move_limits
+        for damp in test_damping
+            new_densities = optimality_criteria_update(
+                densities, sensitivities, volume_fraction, grid, move, damp
+            )
+            
+            volume_error, vol_frac = check_volume_constraint_correct(
+                new_densities, volume_fraction, grid
+            )
+            
+            print_data("Move: $move, Damping: $damp")
+            print_data("  Volume fraction: $vol_frac (target: $volume_fraction)")
+            print_data("  Volume error: $volume_error")
+            println()
+        end
+    end
 end
 
 """
