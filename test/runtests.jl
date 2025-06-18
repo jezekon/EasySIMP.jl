@@ -58,12 +58,24 @@ using EasySIMP.Utils
             ν = ν,
             p = 3.0,
             volume_fraction = 0.4,
-            max_iterations = 10,
-            tolerance = 0.01,
+            max_iterations = 50,        # ← Zvýšit pro lepší konvergenci
+            tolerance = 0.005,          # ← Menší tolerance
             filter_radius = 2.5,
-            move_limit = 0.1,   # Menší move limit
+            move_limit = 0.1,          # ← Menší move limit pro stabilitu
             damping = 0.5
         )
+        # opt_params = OptimizationParameters(
+        #     E0 = E0,
+        #     Emin = 1e-6,
+        #     ν = ν,
+        #     p = 3.0,
+        #     volume_fraction = 0.4,
+        #     max_iterations = 10,
+        #     tolerance = 0.01,
+        #     filter_radius = 2.5,
+        #     move_limit = 0.1,   # Menší move limit
+        #     damping = 0.5
+        # )
         
         # Run optimization
         results = simp_optimize(
