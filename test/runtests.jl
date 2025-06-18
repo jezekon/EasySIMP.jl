@@ -60,7 +60,9 @@ using EasySIMP.Utils
             volume_fraction = 0.4,
             max_iterations = 10,
             tolerance = 0.01,
-            filter_radius = 1.5
+            filter_radius = 2.5,
+            move_limit = 0.1,   # Menší move limit
+            damping = 0.5
         )
         
         # Run optimization
