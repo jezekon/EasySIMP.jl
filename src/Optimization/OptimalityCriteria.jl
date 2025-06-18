@@ -34,90 +34,86 @@ function optimality_criteria_update(
     densities::Vector{Float64},
     sensitivities::Vector{Float64}, 
     volume_fraction::Float64,
-    grid::Grid,
+    total_volume::Float64,
+    element_volumes::Vector{Float64},  # PŘIDAT TENTO PARAMETR
     move_limit::Float64 = 0.2,
     damping::Float64 = 0.5
 )
     n_elements = length(densities)
-    
-    # Calculate proper total volume using the grid geometry
-    total_volume = calculate_volume(grid)
     target_volume = volume_fraction * total_volume
     
     # Minimum density to avoid singularity
     x_min = 1e-3
     
-    # Initialize Lagrange multiplier bounds (as in Sigmund 2001)
-    l1 = 0.0
-    l2 = 100000.0
+    # Initialize Lagrange multiplier bounds for bisection
+    λ_low = 1e-9
+    λ_high = 1e9
     
-    # Bisection algorithm parameters
+    # Bisection algorithm to find Lagrange multiplier
     max_bisection_iter = 50
-    tolerance = 1e-4  # Sigmund uses 1e-4
+    tolerance = 1e-6
     
     new_densities = copy(densities)
     
-    # Bisection algorithm to find Lagrange multiplier
     for iter = 1:max_bisection_iter
-        lmid = 0.5 * (l1 + l2)
+        λ_mid = 0.5 * (λ_low + λ_high)
         
-        # Update densities using Sigmund's OC formula
+        # Update densities with current λ
         for i = 1:n_elements
-            x = densities[i]
-            dc = sensitivities[i]
+            # Optimality condition: -dc/dx = λ * dv/dx
+            # For element with volume V_e: dv/dx = V_e
+            # So: x_new = x * sqrt(-dc/dx / (λ * V_e))
             
-            # Sigmund's exact formula: x * sqrt(-dc/λ)
-            if dc < 0  # Compliance sensitivities should be negative
-                optimality_ratio = x * sqrt(-dc / lmid)  # ← Tady je ta oprava!
+            # Calculate optimality ratio with damping
+            if sensitivities[i] < 0  # Compliance sensitivities are negative
+                optimality_ratio = densities[i] * (-sensitivities[i] / (λ_mid * element_volumes[i]))^damping
             else
-                optimality_ratio = x  # No change if sensitivity is not negative
+                optimality_ratio = densities[i]  # Keep unchanged if sensitivity is positive
             end
             
-            # Apply move limits (Sigmund's nested min/max)
+            # Apply move limits and bounds
             new_densities[i] = max(
                 x_min,
                 max(
-                    x - move_limit,
+                    densities[i] - move_limit,
                     min(
                         1.0,
                         min(
-                            x + move_limit,
-                            optimality_ratio  # ← Bez dodatečného damping exponentu!
+                            densities[i] + move_limit,
+                            optimality_ratio
                         )
                     )
                 )
             )
         end
-                
-        # Calculate resulting volume using proper volume calculation
-        current_volume = calculate_volume(grid, new_densities)
         
-        # Volume constraint error
+        # Calculate resulting volume - SPRÁVNĚ S OBJEMY ELEMENTŮ
+        current_volume = dot(new_densities, element_volumes)
+        
+        # Check volume constraint
         volume_error = current_volume - target_volume
         
-        # Check for convergence
-        if abs(l2 - l1) < tolerance
+        if abs(volume_error) < tolerance
             print_data("OC converged after $iter bisection iterations")
             break
         end
         
-        # Update Lagrange multiplier bounds
+        # Update λ bounds
         if volume_error > 0
-            l1 = lmid  # Too much material, increase λ
+            λ_low = λ_mid  # Too much material, increase λ
         else
-            l2 = lmid  # Too little material, decrease λ
+            λ_high = λ_mid  # Too little material, decrease λ
         end
         
         # Check for convergence failure
         if iter == max_bisection_iter
             print_warning("OC bisection did not converge within $max_bisection_iter iterations")
-            print_data("Final volume error: $volume_error")
-            print_data("Current volume: $current_volume, Target: $target_volume")
         end
     end
     
     return new_densities
 end
+
 
 """
     check_volume_constraint_correct(densities, target_volume_fraction, grid)

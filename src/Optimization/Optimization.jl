@@ -104,6 +104,16 @@ function simp_optimize(
     n_cells = getncells(grid)
     densities = fill(params.volume_fraction, n_cells)
     
+    # Create special cellvalues for volume calculation with higher order quadrature
+    volume_cellvalues = create_volume_quadrature(grid)
+    
+    # Calculate element volumes with higher order quadrature
+    element_volumes = calculate_element_volumes(grid, volume_cellvalues)
+    total_volume = sum(element_volumes)
+    
+    print_data("Total mesh volume: $total_volume")
+    print_data("Element volume range: [$(minimum(element_volumes)), $(maximum(element_volumes))]")
+    
     # Create material model
     material_model = create_simp_material_model(params.E0, params.ν, params.Emin, params.p)
     
@@ -163,15 +173,24 @@ function simp_optimize(
         #     params.move_limit,
         #     params.damping
         # )
-
         densities = optimality_criteria_update(
-            densities, 
-            filtered_sensitivities,
-            params.volume_fraction,
-            grid,  # ← Předávat celý grid object
-            params.move_limit,
-            params.damping
-        )
+              densities, 
+              filtered_sensitivities,
+              params.volume_fraction,
+              total_volume,
+              element_volumes,  # PŘIDAT TOTO
+              params.move_limit,
+              params.damping
+          )
+
+        # densities = optimality_criteria_update(
+        #     densities, 
+        #     filtered_sensitivities,
+        #     params.volume_fraction,
+        #     grid,  # ← Předávat celý grid object
+        #     params.move_limit,
+        #     params.damping
+        # )
         
         # Také přidejte lepší diagnostiku po OC update:
         current_volume = calculate_volume(grid, densities)
@@ -243,6 +262,68 @@ function apply_forces_and_bcs!(K, f, forces, boundary_conditions)
     for bc in boundary_conditions
         apply!(K, f, bc)
     end
+end
+
+"""
+    calculate_element_volumes(grid, cellvalues)
+    
+Calculate volume of each element in the grid using Gaussian quadrature.
+"""
+function calculate_element_volumes(grid::Grid, cellvalues)
+    n_cells = getncells(grid)
+    element_volumes = zeros(n_cells)
+    
+    # Iterate over cell indices
+    for cell_idx in 1:n_cells
+        # Get coordinates of the cell using cell index
+        coords = getcoordinates(grid, cell_idx)
+        
+        # Reinitialize cellvalues for this cell
+        reinit!(cellvalues, coords)
+        
+        # Integrate 1 over element to get volume
+        volume = 0.0
+        for q_point in 1:getnquadpoints(cellvalues)
+            dΩ = getdetJdV(cellvalues, q_point)
+            volume += dΩ
+        end
+        
+        element_volumes[cell_idx] = volume
+    end
+    
+    return element_volumes
+end
+
+"""
+    create_volume_quadrature(grid)
+    
+Create cellvalues specifically for volume calculation with 3rd order quadrature.
+"""
+function create_volume_quadrature(grid::Grid{dim}) where dim
+    # Get cell type from first cell
+    cell = getcells(grid, 1)
+    
+    if cell isa Hexahedron
+        # For hexahedral elements - 3rd order quadrature
+        ip = Lagrange{RefHexahedron, 1}()
+        qr = QuadratureRule{RefHexahedron}(3)  # 3rd order
+    elseif cell isa Tetrahedron  
+        # For tetrahedral elements - 3rd order quadrature
+        ip = Lagrange{RefTetrahedron, 1}()
+        qr = QuadratureRule{RefTetrahedron}(3)  # 3rd order
+    elseif cell isa Quadrilateral && dim == 2
+        # For 2D quad elements
+        ip = Lagrange{RefQuadrilateral, 1}()
+        qr = QuadratureRule{RefQuadrilateral}(3)
+    elseif cell isa Triangle && dim == 2
+        # For 2D triangle elements  
+        ip = Lagrange{RefTriangle, 1}()
+        qr = QuadratureRule{RefTriangle}(3)
+    else
+        error("Unsupported cell type: $(typeof(cell))")
+    end
+    
+    return CellValues(qr, ip)
 end
 
 end # module
