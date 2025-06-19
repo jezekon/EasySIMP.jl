@@ -75,7 +75,7 @@ struct OptimizationResult
 end
 
 """
-    simp_optimize(grid, dh, cellvalues, material_params, forces, boundary_conditions, params)
+    simp_optimize(grid, dh, cellvalues, material_params, forces, boundary_conditions, params, acceleration_data=nothing)
 
 Main SIMP topology optimization function.
 
@@ -86,6 +86,7 @@ Main SIMP topology optimization function.
 - `forces`: Applied forces
 - `boundary_conditions`: Boundary conditions
 - `params`: OptimizationParameters
+- `acceleration_data`: Optional tuple (acceleration_vector, base_density) for variable density acceleration
 
 # Returns
 - `OptimizationResult`: Complete optimization results
@@ -96,9 +97,15 @@ function simp_optimize(
     cellvalues,
     forces,
     boundary_conditions,
-    params::OptimizationParameters
+    params::OptimizationParameters,
+    acceleration_data=nothing  # NEW: Optional acceleration data
 )
     print_info("Starting SIMP topology optimization")
+    
+    if acceleration_data !== nothing
+        acceleration_vector, base_density = acceleration_data
+        print_info("Variable density acceleration enabled: $(acceleration_vector) with base density $(base_density) kg/m³")
+    end
     
     # Initialize
     n_cells = getncells(grid)
@@ -137,8 +144,24 @@ function simp_optimize(
         
         assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities)
         
+        # NEW: Apply variable density acceleration if provided
+        if acceleration_data !== nothing
+            acceleration_vector, base_density = acceleration_data
+            # Create variable density data: actual_density = design_density * base_material_density
+            variable_densities = densities .* base_density
+            apply_variable_density_volume_force!(f, dh, cellvalues, acceleration_vector, variable_densities)
+            
+            # Debug info
+            total_acceleration_force = sum(abs.(f))
+            print_data("Applied variable density acceleration, total force magnitude: $(total_acceleration_force)")
+        end
+        
         # Apply forces and boundary conditions
         apply_forces_and_bcs!(K, f, forces, boundary_conditions)
+        
+        # Debug: Check if forces are non-zero
+        force_magnitude = norm(f)
+        print_data("Total force vector magnitude: $(force_magnitude)")
         
         # Solve FE system
         u = K \ f
@@ -165,34 +188,17 @@ function simp_optimize(
         )
         
         # Update densities using OC
-        # densities = optimality_criteria_update(
-        #     densities, 
-        #     filtered_sensitivities,
-        #     params.volume_fraction,
-        #     calculate_volume(grid),
-        #     params.move_limit,
-        #     params.damping
-        # )
         densities = optimality_criteria_update(
               densities, 
               filtered_sensitivities,
               params.volume_fraction,
               total_volume,
-              element_volumes,  # PŘIDAT TOTO
+              element_volumes,
               params.move_limit,
               params.damping
           )
 
-        # densities = optimality_criteria_update(
-        #     densities, 
-        #     filtered_sensitivities,
-        #     params.volume_fraction,
-        #     grid,  # ← Předávat celý grid object
-        #     params.move_limit,
-        #     params.damping
-        # )
-        
-        # Také přidejte lepší diagnostiku po OC update:
+        # Volume constraint diagnostics
         current_volume = calculate_volume(grid, densities)
         current_volume_fraction = current_volume / calculate_volume(grid)
         
@@ -200,7 +206,7 @@ function simp_optimize(
         print_data("Target volume fraction: $(params.volume_fraction)")
         print_data("Volume constraint error: $(abs(current_volume_fraction - params.volume_fraction))")
         
-        # Volitelně: přidejte check pro extrémní hodnoty
+        # Check for extreme values
         if current_volume_fraction < 0.01 || current_volume_fraction > 0.99
             print_warning("Extreme volume fraction detected: $current_volume_fraction")
             print_warning("This may indicate OC algorithm instability")
@@ -221,6 +227,14 @@ function simp_optimize(
     K = allocate_matrix(dh)
     f = zeros(ndofs(dh))
     assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities)
+    
+    # Apply final acceleration if provided
+    if acceleration_data !== nothing
+        acceleration_vector, base_density = acceleration_data
+        variable_densities = densities .* base_density
+        apply_variable_density_volume_force!(f, dh, cellvalues, acceleration_vector, variable_densities)
+    end
+    
     apply_forces_and_bcs!(K, f, forces, boundary_conditions)
     u = K \ f
     
@@ -253,7 +267,7 @@ end
 Helper function to apply forces and boundary conditions
 """
 function apply_forces_and_bcs!(K, f, forces, boundary_conditions)
-    # Apply forces
+    # Apply point forces
     for force in forces
         apply_force!(f, force...)
     end
