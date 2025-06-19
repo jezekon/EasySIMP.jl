@@ -2,33 +2,18 @@
 DensityFilter.jl
 
 Implementation of density filtering for mesh-independent topology optimization.
-Based on Sigmund (1994, 1997) and Bruns & Tortorelli (2001).
+Enhanced with adaptive filtering for unstructured meshes.
 """
 
 using Ferrite
 using LinearAlgebra
 
-export apply_density_filter, create_filter_matrix
+export apply_density_filter, apply_adaptive_density_filter, should_use_adaptive_filter
 
 """
     apply_density_filter(grid, densities, sensitivities, filter_radius)
 
-Apply density filter to sensitivities to ensure mesh independence.
-
-# Arguments
-- `grid`: Ferrite Grid object
-- `densities`: Current density distribution
-- `sensitivities`: Sensitivity of objective function w.r.t. densities
-- `filter_radius`: Filter radius (in units of element size)
-
-# Returns
-- Filtered sensitivities
-
-# Method
-The filtered sensitivity is calculated as:
-∂c̃/∂xi = (1/xi) * Σj(Hij * xj * ∂c/∂xj) / Σj(Hij)
-
-where Hij = max(0, rmin - dist(i,j)) is the weight factor.
+Original density filter for uniform meshes (Sigmund filter).
 """
 function apply_density_filter(
     grid::Grid,
@@ -39,20 +24,16 @@ function apply_density_filter(
     n_cells = getncells(grid)
     filtered_sensitivities = zeros(n_cells)
     
-    # Get cell centers for distance calculation
+    # Get cell centers
     cell_centers = calculate_cell_centers(grid)
     
-    # Apply filter to each element
+    # Apply filter
     for i = 1:n_cells
         numerator = 0.0
         denominator = 0.0
         
-        # Find neighbors within filter radius
         for j = 1:n_cells
-            # Calculate distance between cell centers
             distance = norm(cell_centers[i] - cell_centers[j])
-            
-            # Calculate weight factor
             weight = max(0.0, filter_radius - distance)
             
             if weight > 0.0
@@ -61,7 +42,6 @@ function apply_density_filter(
             end
         end
         
-        # Calculate filtered sensitivity
         if denominator > 0.0 && densities[i] > 1e-6
             filtered_sensitivities[i] = numerator / (densities[i] * denominator)
         else
@@ -73,106 +53,46 @@ function apply_density_filter(
 end
 
 """
-    calculate_cell_centers(grid)
+    apply_adaptive_density_filter(grid, densities, sensitivities, base_filter_radius)
 
-Calculate the center coordinates of all cells in the grid.
-
-# Returns
-- Vector of cell center coordinates
+Adaptive density filter for non-uniform meshes.
+Each element uses radius scaled by its local size relative to median.
 """
-function calculate_cell_centers(grid::Grid)
-    n_cells = getncells(grid)
-    cell_centers = Vector{Vec{3, Float64}}(undef, n_cells)
-    
-    for (cell_id, cell) in enumerate(getcells(grid))
-        # Get node coordinates for this cell
-        node_coords = [grid.nodes[node_id].x for node_id in cell.nodes]
-        
-        # Calculate center as average of node coordinates
-        center = sum(node_coords) / length(node_coords)
-        cell_centers[cell_id] = center
-    end
-    
-    return cell_centers
-end
-
-"""
-    create_filter_matrix(grid, filter_radius)
-
-Create the filter matrix H for efficient filtering operations.
-This is more efficient for multiple filtering operations.
-
-# Arguments
-- `grid`: Ferrite Grid object  
-- `filter_radius`: Filter radius
-
-# Returns
-- Sparse filter matrix H where H[i,j] is the weight between cells i and j
-"""
-function create_filter_matrix(grid::Grid, filter_radius::Float64)
-    n_cells = getncells(grid)
-    cell_centers = calculate_cell_centers(grid)
-    
-    # Initialize sparse matrix components
-    I = Int[]
-    J = Int[]
-    V = Float64[]
-    
-    # Build filter matrix
-    for i = 1:n_cells
-        for j = 1:n_cells
-            distance = norm(cell_centers[i] - cell_centers[j])
-            weight = max(0.0, filter_radius - distance)
-            
-            if weight > 0.0
-                push!(I, i)
-                push!(J, j) 
-                push!(V, weight)
-            end
-        end
-    end
-    
-    # Create sparse matrix
-    H = sparse(I, J, V, n_cells, n_cells)
-    
-    return H
-end
-
-"""
-    apply_filter_with_matrix(H, densities, sensitivities)
-
-Apply density filter using pre-computed filter matrix.
-
-# Arguments
-- `H`: Filter matrix (from create_filter_matrix)
-- `densities`: Current density distribution
-- `sensitivities`: Sensitivities to filter
-
-# Returns
-- Filtered sensitivities
-"""
-function apply_filter_with_matrix(
-    H::SparseMatrixCSC,
+function apply_adaptive_density_filter(
+    grid::Grid,
     densities::Vector{Float64},
-    sensitivities::Vector{Float64}
+    sensitivities::Vector{Float64},
+    base_filter_radius::Float64
 )
-    n_cells = length(densities)
+    n_cells = getncells(grid)
     filtered_sensitivities = zeros(n_cells)
     
+    # Calculate element sizes and median
+    element_sizes = calculate_element_sizes(grid)
+    median_size = estimate_median_size(element_sizes)
+    
+    # Get cell centers
+    cell_centers = calculate_cell_centers(grid)
+    
+    # Apply adaptive filter
     for i = 1:n_cells
-        if densities[i] > 1e-6
-            # Calculate numerator: Σj(Hij * xj * ∂c/∂xj)
-            numerator = 0.0
-            denominator = 0.0
+        # Scale radius by element size
+        local_radius = base_filter_radius * (element_sizes[i] / median_size)
+        
+        numerator = 0.0
+        denominator = 0.0
+        
+        for j = 1:n_cells
+            distance = norm(cell_centers[i] - cell_centers[j])
+            weight = max(0.0, local_radius - distance)
             
-            for j in nzrange(H, i)
-                col = H.rowval[j]
-                weight = H.nzval[j]
-                numerator += weight * densities[col] * sensitivities[col]
+            if weight > 0.0
+                numerator += weight * densities[j] * sensitivities[j]
                 denominator += weight
             end
-            
-            # Apply filter formula
+        end
+        
+        if denominator > 0.0 && densities[i] > 1e-6
             filtered_sensitivities[i] = numerator / (densities[i] * denominator)
         else
             filtered_sensitivities[i] = sensitivities[i]
@@ -183,52 +103,118 @@ function apply_filter_with_matrix(
 end
 
 """
-    helmholtz_filter(grid, sensitivities, filter_radius)
+    should_use_adaptive_filter(grid)
 
-Alternative Helmholtz-type PDE filter (more advanced).
-
-∇²s̃ - (r/R)² s̃ = -s / R²
-
-where s are the original sensitivities and s̃ are the filtered ones.
+Simple criterion to decide which filter to use.
+Returns true if element size variation > 3.0
 """
-function helmholtz_filter(
-    grid::Grid,
-    sensitivities::Vector{Float64},
-    filter_radius::Float64
-)
-    # This would require solving a PDE - more complex implementation
-    # For now, fall back to density filter
-    @warn "Helmholtz filter not yet implemented, using density filter"
-    return sensitivities
+function should_use_adaptive_filter(grid::Grid)
+    element_sizes = calculate_element_sizes(grid)
+    min_size = minimum(element_sizes)
+    max_size = maximum(element_sizes)
+    size_ratio = max_size / min_size
+    
+    return size_ratio > 3.0
 end
 
 """
-    calculate_effective_filter_radius(grid, filter_radius)
+    calculate_element_sizes(grid)
 
-Calculate effective filter radius based on element size.
-
-# Arguments
-- `grid`: Ferrite Grid
-- `filter_radius`: Desired filter radius in element units
-
-# Returns  
-- Actual filter radius in coordinate units
+Calculate characteristic size for each element.
 """
-function calculate_effective_filter_radius(grid::Grid, filter_radius::Float64)
-    # Estimate element size from first few elements
-    if getncells(grid) == 0
-        return filter_radius
+function calculate_element_sizes(grid::Grid)
+    n_cells = getncells(grid)
+    element_sizes = zeros(n_cells)
+    
+    for cell_idx in 1:n_cells
+        coords = getcoordinates(grid, cell_idx)
+        
+        if length(coords) == 4  # Tetrahedron
+            element_sizes[cell_idx] = calculate_tet_size(coords)
+        elseif length(coords) == 8  # Hexahedron  
+            element_sizes[cell_idx] = calculate_hex_size(coords)
+        else
+            element_sizes[cell_idx] = calculate_avg_edge_length(coords)
+        end
     end
     
-    # Get first cell and estimate its size
-    first_cell = getcells(grid, 1)
-    node_coords = [grid.nodes[node_id].x for node_id in first_cell.nodes]
+    return element_sizes
+end
+
+"""
+    calculate_tet_size(coords)
+
+Tetrahedral element size as cube root of volume.
+"""
+function calculate_tet_size(coords::Vector{Vec{3, Float64}})
+    p0, p1, p2, p3 = coords[1], coords[2], coords[3], coords[4]
+    B = hcat(p1 - p0, p2 - p0, p3 - p0)
+    volume = abs(det(B)) / 6.0
+    return volume^(1/3)
+end
+
+"""
+    calculate_hex_size(coords)
+
+Hexahedral element size as geometric mean of edges.
+"""
+function calculate_hex_size(coords::Vector{Vec{3, Float64}})
+    edge1 = norm(coords[2] - coords[1])
+    edge2 = norm(coords[4] - coords[1]) 
+    edge3 = norm(coords[5] - coords[1])
+    return (edge1 * edge2 * edge3)^(1/3)
+end
+
+"""
+    calculate_avg_edge_length(coords)
+
+Average edge length for any element type.
+"""
+function calculate_avg_edge_length(coords::Vector{Vec{3, Float64}})
+    n_nodes = length(coords)
+    total_length = 0.0
+    n_edges = 0
     
-    # Calculate approximate element size (distance between first two nodes)
-    if length(node_coords) >= 2
-        element_size = norm(node_coords[2] - node_coords[1])
-        return filter_radius * element_size
+    for i in 1:n_nodes
+        for j in (i+1):n_nodes
+            total_length += norm(coords[j] - coords[i])
+            n_edges += 1
+        end
+    end
+    
+    return total_length / n_edges
+end
+
+"""
+    estimate_median_size(element_sizes)
+
+Calculate median element size.
+"""
+function estimate_median_size(element_sizes::Vector{Float64})
+    sorted_sizes = sort(element_sizes)
+    n = length(sorted_sizes)
+    
+    if n % 2 == 1
+        return sorted_sizes[div(n+1, 2)]
     else
-        return filter_radius
+        return (sorted_sizes[div(n, 2)] + sorted_sizes[div(n, 2) + 1]) / 2
     end
+end
+
+"""
+    calculate_cell_centers(grid)
+
+Calculate center coordinates of all cells.
+"""
+function calculate_cell_centers(grid::Grid)
+    n_cells = getncells(grid)
+    cell_centers = Vector{Vec{3, Float64}}(undef, n_cells)
+    
+    for (cell_id, cell) in enumerate(getcells(grid))
+        node_coords = [grid.nodes[node_id].x for node_id in cell.nodes]
+        center = sum(node_coords) / length(node_coords)
+        cell_centers[cell_id] = center
+    end
+    
+    return cell_centers
 end
