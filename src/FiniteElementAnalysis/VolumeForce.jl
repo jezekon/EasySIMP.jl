@@ -136,7 +136,7 @@ Parameters:
 Returns:
 - nothing (modifies f in-place)
 """
-function apply_acceleration!(f, dh, cellvalues, acceleration_vector, density=1.0)
+function apply_acceleration!(f, dh, cellvalues, acceleration_vector, density)
     # Calculate inertial force per unit volume: F = ρ * a
     inertial_force = density .* acceleration_vector
     
