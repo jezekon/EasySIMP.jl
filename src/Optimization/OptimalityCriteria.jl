@@ -75,7 +75,7 @@ function optimality_criteria_update(
     λ_low = 1e-9
     λ_high = 1e9
     tolerance = 1e-6
-    max_iter = 50
+    max_iter = 200
     
     new_densities = copy(densities)
     
