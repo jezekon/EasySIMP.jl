@@ -8,9 +8,14 @@ using EasySIMP.PostProcessing
 using EasySIMP.Utils
 
 @testset "EasySIMP.jl Tests" begin
-    
-    @testset "Cantilever Beam SIMP Optimization" begin
-        print_info("Running Cantilever Beam SIMP Optimization")
+
+  RUN_BEAM_fixed = true
+  RUN_BEAM_slide = true
+  RUN_BEAM_acc   = true
+
+  if RUN_BEAM_fixed
+    @testset "Cantilever Beam SIMP (fixed)" begin
+        print_info("Running Cantilever Beam SIMP (fixed")
         
         # Import mesh
         grid = import_mesh("../data/cantilever_beam.vtu")
@@ -81,4 +86,17 @@ using EasySIMP.Utils
         
         print_success("Test completed successfully!")
     end
+  end
+
+  if RUN_BEAM_slide
+    @testset "Cantilever Beam SIMP (slide)" begin
+
+    end
+  end
+
+  if RUN_BEAM_acc
+    @testset "Cantilever Beam SIMP (accelerated)" begin
+
+    end
+  end
 end
