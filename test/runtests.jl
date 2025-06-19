@@ -11,8 +11,8 @@ using EasySIMP.Utils
 
   RUN_BEAM_fixed = false
   RUN_BEAM_slide = false
-  RUN_BEAM_acc   = true
-  RUN_CHAPADLO   = false
+  RUN_BEAM_acc   = false
+  RUN_CHAPADLO   = true
 
   if RUN_BEAM_fixed
     @testset "Cantilever Beam SIMP (fixed)" begin
@@ -388,7 +388,7 @@ using EasySIMP.Utils
               ν = ν,
               p = 3.0,
               volume_fraction = 0.3,     # 30% objemový poměr
-              max_iterations = 30,       # Více iterací pro komplexnější geometrii
+              max_iterations = 10,       # Více iterací pro komplexnější geometrii
               tolerance = 0.005,
               filter_radius = 2.0,       # Menší filtr pro detail
               move_limit = 0.2,          # Zadaný limitní krok
