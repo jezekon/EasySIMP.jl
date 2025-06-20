@@ -4,9 +4,10 @@ using Ferrite
 using LinearAlgebra
 using SparseArrays
 using StaticArrays
+using ..Utils
 
 # Exported functions
-export create_material_model, setup_problem, assemble_stiffness_matrix!,
+export scale_mesh_to_meters!, create_material_model, setup_problem, assemble_stiffness_matrix!,
        select_nodes_by_plane, select_nodes_by_circle, get_node_dofs,
        apply_fixed_boundary!, apply_sliding_boundary!, apply_force!, solve_system,
        calculate_stresses, create_simp_material_model, assemble_stiffness_matrix_simp!,
@@ -14,6 +15,34 @@ export create_material_model, setup_problem, assemble_stiffness_matrix!,
 
 include("VolumeForce.jl")
 export apply_volume_force!, apply_gravity!, apply_acceleration!, apply_variable_density_volume_force!
+
+# Po importu mesh, přeškáluj na metry
+function scale_mesh_to_meters!(grid::Grid, scale_factor::Float64=1000.0)
+    print_info("Scaling mesh coordinates by factor 1/$(scale_factor)")
+    
+    # Get bounds before scaling
+    coords_before = [norm(grid.nodes[1].x), norm(grid.nodes[end].x)]
+    
+    # Create new scaled nodes
+    new_nodes = Vector{Ferrite.Node{3, Float64}}()
+    for node in grid.nodes
+        old_x = node.x
+        # Simple way: create Vec from scaled vector
+        scaled_coords = collect(old_x) ./ scale_factor
+        new_coord = Vec{3}(scaled_coords)
+        push!(new_nodes, Ferrite.Node(new_coord))
+    end
+    
+    # Create new grid
+    new_grid = Ferrite.Grid(getcells(grid), new_nodes)
+    
+    # Get bounds after scaling  
+    coords_after = [norm(new_grid.nodes[1].x), norm(new_grid.nodes[end].x)]
+    print_data("Coordinate scale check: $(coords_before) -> $(coords_after)")
+    
+    return new_grid
+end
+
 
 """
     create_material_model(youngs_modulus::Float64, poissons_ratio::Float64)
