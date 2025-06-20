@@ -276,7 +276,7 @@ using EasySIMP.Utils
         print_success("Acceleration test completed successfully!")
     end
   end
-
+  
   if RUN_CHAPADLO
       @testset "Chapadlo SIMP Optimization" begin
           print_info("Running Chapadlo SIMP topology optimization")
@@ -301,9 +301,13 @@ using EasySIMP.Utils
           print_success("FEM setup complete: $(ndofs(dh)) DOFs")
           
           # Boundary conditions - Vetknutí (Fixed support)
-          # Omezená rovina XZ, y = 75, kruh r = 16.11, střed = [0, 75, 15]
-          fixed_nodes = select_nodes_by_circle(grid, [0.0, 75.0, 15.0], [0.0, 1.0, 0.0], 16.11, 1e-3)
+          # Omezená rovina XZ, y = 75, kruh r = 16.11, střed = [0, 75, 115]
+          fixed_nodes = select_nodes_by_circle(grid, [0.0, 75.0, 115.0], [0.0, -1.0, 0.0], 16.11, 1e-3)
           print_info("Found $(length(fixed_nodes)) fixed nodes for vetknutí")
+          
+          # Symetrie - celá rovina YZ, x = 0, nulový posuv ve směru x
+          symmetry_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-3)
+          print_info("Found $(length(symmetry_nodes)) symmetry nodes on YZ plane (x=0)")
           
           # Load points
           # 1. Nožičky: rovina XY, z = -90, síla 2.5N
@@ -313,11 +317,21 @@ using EasySIMP.Utils
           # 2. Kamera: omezená rovina XY, z = 5, kruh r = 21.5, střed = [0, 0, 5], síla 1N
           kamera_nodes = select_nodes_by_circle(grid, [0.0, 0.0, 5.0], [0.0, 0.0, 1.0], 21.5, 1e-3)
           print_info("Found $(length(kamera_nodes)) nodes for kamera")
+
+          # Export boundary conditions for visualization
+          print_info("Exporting boundary conditions for ParaView inspection...")
+          
+          # Export all boundary conditions (fixed, symmetry vs all forces)
+          all_force_nodes = union(nozicky_nodes, kamera_nodes)
+          all_constraint_nodes = union(fixed_nodes, symmetry_nodes)
+          export_boundary_conditions(grid, dh, all_constraint_nodes, all_force_nodes, "chapadlo_boundary_conditions_all")
+          
+          # exit()  # Uncomment to only export boundary conditions without running optimization
           
           # Handle empty node sets by finding closest nodes
           if isempty(fixed_nodes)
-              print_warning("No fixed nodes found, finding closest to [0, 75, 15]")
-              target_point = [0.0, 75.0, 15.0]
+              print_warning("No fixed nodes found, finding closest to [0, 75, 115]")
+              target_point = [0.0, 75.0, 115.0]
               min_dist = Inf
               closest_node = 1
               for node_id = 1:getnnodes(grid)
@@ -330,6 +344,19 @@ using EasySIMP.Utils
               end
               fixed_nodes = Set([closest_node])
               print_info("Using closest node $(closest_node) for fixed support")
+          end
+          
+          if isempty(symmetry_nodes)
+              print_warning("No symmetry nodes found on YZ plane")
+              # Find nodes closest to x=0 plane
+              symmetry_nodes = Set{Int}()
+              for node_id = 1:getnnodes(grid)
+                  node_coord = grid.nodes[node_id].x
+                  if abs(node_coord[1]) < 2.0  # Within 2mm of x=0 plane
+                      push!(symmetry_nodes, node_id)
+                  end
+              end
+              print_info("Found $(length(symmetry_nodes)) nodes near x=0 plane for symmetry")
           end
           
           if isempty(nozicky_nodes)
@@ -364,8 +391,15 @@ using EasySIMP.Utils
           # Apply boundary conditions
           assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, fill(0.3, getncells(grid)))
           
-          # Fixed boundary condition (vetknutí)
+          # Fixed boundary condition (vetknutí) - all DOFs fixed
           ch_fixed = apply_fixed_boundary!(K, f, dh, fixed_nodes)
+          
+          # Symmetry boundary condition - fix only X direction (DOF 1)
+          ch_symmetry = apply_sliding_boundary!(K, f, dh, symmetry_nodes, [1])
+          
+          print_info("Applied boundary conditions:")
+          print_data("  Fixed support: $(length(fixed_nodes)) nodes (all DOFs)")
+          print_data("  Symmetry: $(length(symmetry_nodes)) nodes (X direction only)")
           
           # Apply forces
           # Nožičky: 2.5N dolů (předpokládám směr [0, 0, -1])
@@ -390,7 +424,7 @@ using EasySIMP.Utils
               volume_fraction = 0.3,     # 30% objemový poměr
               max_iterations = 10,       # Více iterací pro komplexnější geometrii
               tolerance = 0.005,
-              filter_radius = 2.0,       # Menší filtr pro detail
+              filter_radius = 2.5,       # Větší filtr pro stabilitu
               move_limit = 0.2,          # Zadaný limitní krok
               damping = 0.5              # Zadané tlumení
           )
@@ -401,7 +435,7 @@ using EasySIMP.Utils
           print_data("  Damping: $(opt_params.damping)")
           print_data("  Filter radius: $(opt_params.filter_radius)")
           
-          # Run optimization with multiple forces and acceleration
+          # Run optimization with multiple forces and both boundary conditions
           forces_list = [
               (dh, collect(nozicky_nodes), [0.0, 0.0, -2500.]),
               (dh, collect(kamera_nodes), [0.0, 0.0, -1000.])
@@ -410,7 +444,7 @@ using EasySIMP.Utils
           results = simp_optimize(
               grid, dh, cellvalues,
               forces_list,
-              [ch_fixed], 
+              [ch_fixed, ch_symmetry],  # Both boundary conditions
               opt_params,
               # acceleration_data
           )
@@ -423,12 +457,11 @@ using EasySIMP.Utils
           
           # Export results
           results_data = create_results_data(grid, dh, results)
-          export_results_vtu(results_data, "chapadlo_optimization")
+          export_results_vtu(results_data, "chapadlo_optimization_with_symmetry")
           
           print_success("Chapadlo test completed successfully!")
-          print_info("Results exported to: chapadlo_optimization_results.vtu")
+          print_info("Results exported to: chapadlo_optimization_with_symmetry_results.vtu")
       end
   end
-
-
+  
 end
