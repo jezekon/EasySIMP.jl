@@ -457,10 +457,10 @@ using EasySIMP.Utils
           
           # Export results
           results_data = create_results_data(grid, dh, results)
-          export_results_vtu(results_data, "chapadlo_optimization_with_symmetry")
+          export_results_vtu(results_data, "chapadlo_optimization")
           
           print_success("Chapadlo test completed successfully!")
-          print_info("Results exported to: chapadlo_optimization_with_symmetry_results.vtu")
+          print_info("Results exported to: chapadlo_optimization.vtu")
       end
   end
   
