@@ -5,7 +5,9 @@ using WriteVTK
 using ..FiniteElementAnalysis
 using ..Utils
 
-export export_results_vtu, ResultsData, create_results_data
+export export_results_vtu, ResultsData, create_results_data, export_boundary_conditions
+
+include("ExportBoundaryConditions.jl")
 
 """
     ResultsData
