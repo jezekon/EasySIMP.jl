@@ -185,15 +185,13 @@ function simp_optimize(
         )
         
         # Density filtering with proper element size scaling
-        # params.filter_radius is now interpreted as multiple of element size (like Sigmund's rmin)
-        # For example: filter_radius = 1.5 means 1.5 times the characteristic element size
-        filtered_sensitivities = apply_density_filter_scaled(
+        filtered_sensitivities = apply_density_filter(
             grid, densities, sensitivities, params.filter_radius
         )
         
         # Validate filter parameters on first iteration
         if iteration == 1
-            validate_filter_parameters(grid, params.filter_radius)
+            print_filter_info(grid, params.filter_radius, "auto")
         end
         
         # Update densities using OC

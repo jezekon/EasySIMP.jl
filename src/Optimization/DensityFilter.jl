@@ -1,108 +1,96 @@
 """
-DensityFilter.jl
+DensityFilter.jl - Simplified density filtering for SIMP topology optimization
 
-Improved density filtering implementation that properly accounts for element sizes.
-This addresses the issue where filter radius needs to be scaled by actual element dimensions.
+Three approaches:
+1. Automatic: automatically choose between uniform/adaptive based on mesh
+2. Uniform mesh: constant filter radius scaled by uniform element size
+3. Adaptive mesh: locally varying filter radius based on local element size
 """
 
 using Ferrite
 using LinearAlgebra
 
-export apply_density_filter, apply_adaptive_density_filter, should_use_adaptive_filter,
-       estimate_characteristic_element_size, apply_density_filter_scaled
+export apply_density_filter, apply_density_filter_uniform, apply_density_filter_adaptive, 
+       estimate_element_size, calculate_cell_centers
 
 """
-    estimate_characteristic_element_size(grid)
+    apply_density_filter(grid, densities, sensitivities, filter_radius_ratio)
 
-Estimate characteristic element size for uniform or nearly-uniform meshes.
-This is used to scale the filter radius appropriately.
-"""
-function estimate_characteristic_element_size(grid::Grid)
-    # Sample a few elements to estimate characteristic size
-    n_sample = min(100, getncells(grid))
-    sample_indices = 1:div(getncells(grid), n_sample):getncells(grid)
-    
-    total_size = 0.0
-    count = 0
-    
-    for cell_idx in sample_indices
-        coords = getcoordinates(grid, cell_idx)
-        
-        if length(coords) == 4  # Tetrahedron
-            size = calculate_tet_size(coords)
-        elseif length(coords) == 8  # Hexahedron  
-            size = calculate_hex_size(coords)
-        else
-            size = calculate_avg_edge_length(coords)
-        end
-        
-        total_size += size
-        count += 1
-    end
-    
-    return count > 0 ? total_size / count : 1.0
-end
+Automatic density filter that chooses uniform or adaptive based on mesh uniformity.
+Recommended for most users.
 
-"""
-    apply_density_filter_scaled(grid, densities, sensitivities, filter_radius_ratio)
-
-Apply density filter with proper scaling for element sizes.
-filter_radius_ratio is given as multiple of characteristic element size (like in Sigmund's paper).
-
-Parameters:
+# Arguments
 - `grid`: Computational mesh
 - `densities`: Current density distribution  
 - `sensitivities`: Sensitivity values
-- `filter_radius_ratio`: Filter radius as multiple of element size (e.g., 1.5)
+- `filter_radius_ratio`: Filter radius as multiple of element size (like Sigmund's rmin)
 
-Returns:
+# Returns
 - Filtered sensitivities
+
+# Example
+```julia
+# Automatic choice: filter_radius = 1.5 × element_size
+filtered_sens = apply_density_filter(grid, densities, sensitivities, 1.5)
+```
 """
-function apply_density_filter_scaled(
+function apply_density_filter(
     grid::Grid,
     densities::Vector{Float64},
     sensitivities::Vector{Float64},
     filter_radius_ratio::Float64
 )
-    # Estimate characteristic element size
-    char_element_size = estimate_characteristic_element_size(grid)
+    # Check mesh uniformity
+    element_sizes = calculate_element_sizes(grid)
+    size_variation = maximum(element_sizes) / minimum(element_sizes)
     
-    # Calculate actual filter radius in mesh coordinates
-    filter_radius = filter_radius_ratio * char_element_size
-    
-    println("Characteristic element size: $char_element_size")
-    println("Filter radius ratio: $filter_radius_ratio")
-    println("Actual filter radius: $filter_radius")
-    
-    # Check if mesh is uniform enough for basic filter
-    if should_use_adaptive_filter(grid)
-        println("Using adaptive filter due to non-uniform mesh")
-        return apply_adaptive_density_filter(grid, densities, sensitivities, filter_radius)
+    if size_variation > 1.5
+        # Non-uniform mesh: use adaptive filter
+        return apply_density_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio)
     else
-        println("Using basic filter with scaled radius")
-        return apply_density_filter_basic(grid, densities, sensitivities, filter_radius)
+        # Uniform mesh: use uniform filter
+        return apply_density_filter_uniform(grid, densities, sensitivities, filter_radius_ratio)
     end
 end
 
 """
-    apply_density_filter_basic(grid, densities, sensitivities, filter_radius)
+    apply_density_filter_uniform(grid, densities, sensitivities, filter_radius_ratio)
 
-Basic density filter implementation (improved version of original).
-filter_radius should be in same units as mesh coordinates.
+Density filter for uniform meshes where all elements have similar size.
+Filter radius = filter_radius_ratio × characteristic_element_size
+
+# Arguments
+- `grid`: Computational mesh
+- `densities`: Current density distribution  
+- `sensitivities`: Sensitivity values
+- `filter_radius_ratio`: Filter radius as multiple of characteristic element size
+
+# Returns
+- Filtered sensitivities
+
+# Example
+```julia
+# For uniform mesh: filter_radius = 1.5 × characteristic_element_size
+filtered_sens = apply_density_filter_uniform(grid, densities, sensitivities, 1.5)
+```
 """
-function apply_density_filter_basic(
+function apply_density_filter_uniform(
     grid::Grid,
     densities::Vector{Float64},
     sensitivities::Vector{Float64},
-    filter_radius::Float64
+    filter_radius_ratio::Float64
 )
     n_cells = getncells(grid)
     filtered_sensitivities = zeros(n_cells)
     
-    # Get cell centers
+    # Calculate characteristic element size and actual filter radius
+    char_element_size = estimate_element_size(grid)
+    filter_radius = filter_radius_ratio * char_element_size
+    
+    # Get cell centers once
     cell_centers = calculate_cell_centers(grid)
     
-    # Apply filter with proper Sigmund formulation
+    # Apply Sigmund's filter formula
     for i = 1:n_cells
         numerator = 0.0
         denominator = 0.0
@@ -110,75 +98,59 @@ function apply_density_filter_basic(
         for j = 1:n_cells
             distance = norm(cell_centers[i] - cell_centers[j])
             
-            # Sigmund's linear weight function: w = max(0, rmin - distance)
+            # Sigmund's linear weight: w = max(0, rmin - distance)
             weight = max(0.0, filter_radius - distance)
             
             if weight > 0.0
                 numerator += weight * densities[j] * sensitivities[j]
-                denominator += weight * densities[j]  # Note: weight by density!
+                denominator += weight * densities[j]
             end
         end
         
-        if denominator > 1e-12
-            filtered_sensitivities[i] = numerator / denominator
-        else
-            filtered_sensitivities[i] = sensitivities[i]
-        end
+        filtered_sensitivities[i] = denominator > 1e-12 ? numerator / denominator : sensitivities[i]
     end
     
     return filtered_sensitivities
 end
 
 """
-    apply_density_filter(grid, densities, sensitivities, filter_radius)
-
-Main density filter function - automatically selects appropriate method.
-For backward compatibility, assumes filter_radius is in mesh coordinates.
-"""
-function apply_density_filter(
-    grid::Grid,
-    densities::Vector{Float64},
-    sensitivities::Vector{Float64},
-    filter_radius::Float64
-)
-    # Check if mesh requires adaptive filtering
-    if should_use_adaptive_filter(grid)
-        return apply_adaptive_density_filter(grid, densities, sensitivities, filter_radius)
-    else
-        return apply_density_filter_basic(grid, densities, sensitivities, filter_radius)
-    end
-end
-
-"""
-    apply_adaptive_density_filter(grid, densities, sensitivities, base_filter_radius)
+    apply_density_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio)
 
 Adaptive density filter for non-uniform meshes.
-Each element uses radius scaled by its local size relative to median.
+Each element uses filter radius = filter_radius_ratio × local_element_size
+
+# Arguments
+- `grid`: Computational mesh
+- `densities`: Current density distribution  
+- `sensitivities`: Sensitivity values
+- `filter_radius_ratio`: Filter radius as multiple of local element size
+
+# Returns
+- Filtered sensitivities
+
+# Example
+```julia
+# For non-uniform mesh: filter_radius = 1.5 × local_element_size for each element
+filtered_sens = apply_density_filter_adaptive(grid, densitivities, sensitivities, 1.5)
+```
 """
-function apply_adaptive_density_filter(
+function apply_density_filter_adaptive(
     grid::Grid,
     densities::Vector{Float64},
     sensitivities::Vector{Float64},
-    base_filter_radius::Float64
+    filter_radius_ratio::Float64
 )
     n_cells = getncells(grid)
     filtered_sensitivities = zeros(n_cells)
     
-    # Calculate element sizes and median
+    # Calculate element sizes and cell centers
     element_sizes = calculate_element_sizes(grid)
-    median_size = estimate_median_size(element_sizes)
-    
-    # Get cell centers
     cell_centers = calculate_cell_centers(grid)
-    
-    println("Applying adaptive density filter")
-    println("Element size range: [$(minimum(element_sizes)), $(maximum(element_sizes))]")
-    println("Median element size: $median_size")
     
     # Apply adaptive filter
     for i = 1:n_cells
-        # Scale radius by element size
-        local_radius = base_filter_radius * (element_sizes[i] / median_size)
+        # Local filter radius = filter_radius_ratio × element_size[i]
+        local_radius = filter_radius_ratio * element_sizes[i]
         
         numerator = 0.0
         denominator = 0.0
@@ -193,44 +165,36 @@ function apply_adaptive_density_filter(
             end
         end
         
-        if denominator > 1e-12
-            filtered_sensitivities[i] = numerator / denominator
-        else
-            filtered_sensitivities[i] = sensitivities[i]
-        end
+        filtered_sensitivities[i] = denominator > 1e-12 ? numerator / denominator : sensitivities[i]
     end
     
     return filtered_sensitivities
 end
 
 """
-    should_use_adaptive_filter(grid)
+    estimate_element_size(grid)
 
-Determine if adaptive filtering is needed based on mesh uniformity.
-Returns true if element size variation > 2.0
+Estimate characteristic element size for the entire mesh.
+Useful for determining appropriate filter radius.
 """
-function should_use_adaptive_filter(grid::Grid)
-    element_sizes = calculate_element_sizes(grid)
-    min_size = minimum(element_sizes)
-    max_size = maximum(element_sizes)
-    size_ratio = max_size / min_size
+function estimate_element_size(grid::Grid)
+    # Sample first few elements
+    n_sample = min(10, getncells(grid))
+    total_size = 0.0
     
-    # Use adaptive filter if size variation is significant
-    use_adaptive = size_ratio > 2.0
-    
-    if use_adaptive
-        println("Mesh size ratio: $size_ratio > 2.0, using adaptive filter")
-    else
-        println("Mesh size ratio: $size_ratio ≤ 2.0, using basic filter")
+    for cell_idx in 1:n_sample
+        coords = getcoordinates(grid, cell_idx)
+        total_size += calculate_single_element_size(coords)
     end
     
-    return use_adaptive
+    return total_size / n_sample
 end
 
 """
     calculate_element_sizes(grid)
 
-Calculate characteristic size for each element.
+Calculate characteristic size for each element in the grid.
+Used by adaptive filter and mesh uniformity check.
 """
 function calculate_element_sizes(grid::Grid)
     n_cells = getncells(grid)
@@ -238,17 +202,38 @@ function calculate_element_sizes(grid::Grid)
     
     for cell_idx in 1:n_cells
         coords = getcoordinates(grid, cell_idx)
-        
-        if length(coords) == 4  # Tetrahedron
-            element_sizes[cell_idx] = calculate_tet_size(coords)
-        elseif length(coords) == 8  # Hexahedron  
-            element_sizes[cell_idx] = calculate_hex_size(coords)
-        else
-            element_sizes[cell_idx] = calculate_avg_edge_length(coords)
-        end
+        element_sizes[cell_idx] = calculate_single_element_size(coords)
     end
     
     return element_sizes
+end
+
+"""
+    calculate_single_element_size(coords)
+
+Calculate characteristic size of a single element from its coordinates.
+"""
+function calculate_single_element_size(coords::Vector{Vec{3, Float64}})
+    n_nodes = length(coords)
+    
+    if n_nodes == 4  # Tetrahedron
+        return calculate_tet_size(coords)
+    elseif n_nodes == 8  # Hexahedron  
+        return calculate_hex_size(coords)
+    else
+        # Generic: average edge length
+        total_length = 0.0
+        n_edges = 0
+        
+        for i in 1:n_nodes
+            for j in (i+1):n_nodes
+                total_length += norm(coords[j] - coords[i])
+                n_edges += 1
+            end
+        end
+        
+        return n_edges > 0 ? total_length / n_edges : 1.0
+    end
 end
 
 """
@@ -258,57 +243,23 @@ Tetrahedral element size as cube root of volume.
 """
 function calculate_tet_size(coords::Vector{Vec{3, Float64}})
     p0, p1, p2, p3 = coords[1], coords[2], coords[3], coords[4]
+    # Volume = |det(B)| / 6 where B = [p1-p0, p2-p0, p3-p0]
     B = hcat(p1 - p0, p2 - p0, p3 - p0)
     volume = abs(det(B)) / 6.0
-    return volume^(1/3)
+    return volume^(1/3)  # Characteristic length
 end
 
 """
     calculate_hex_size(coords)
 
-Hexahedral element size as geometric mean of edges.
+Hexahedral element size as geometric mean of three edge lengths.
 """
 function calculate_hex_size(coords::Vector{Vec{3, Float64}})
+    # Take three orthogonal edges from first node
     edge1 = norm(coords[2] - coords[1])
     edge2 = norm(coords[4] - coords[1]) 
     edge3 = norm(coords[5] - coords[1])
     return (edge1 * edge2 * edge3)^(1/3)
-end
-
-"""
-    calculate_avg_edge_length(coords)
-
-Average edge length for any element type.
-"""
-function calculate_avg_edge_length(coords::Vector{Vec{3, Float64}})
-    n_nodes = length(coords)
-    total_length = 0.0
-    n_edges = 0
-    
-    for i in 1:n_nodes
-        for j in (i+1):n_nodes
-            total_length += norm(coords[j] - coords[i])
-            n_edges += 1
-        end
-    end
-    
-    return total_length / n_edges
-end
-
-"""
-    estimate_median_size(element_sizes)
-
-Calculate median element size.
-"""
-function estimate_median_size(element_sizes::Vector{Float64})
-    sorted_sizes = sort(element_sizes)
-    n = length(sorted_sizes)
-    
-    if n % 2 == 1
-        return sorted_sizes[div(n+1, 2)]
-    else
-        return (sorted_sizes[div(n, 2)] + sorted_sizes[div(n, 2) + 1]) / 2
-    end
 end
 
 """
@@ -330,35 +281,33 @@ function calculate_cell_centers(grid::Grid)
 end
 
 """
-    validate_filter_parameters(grid, filter_radius_ratio)
+    print_filter_info(grid, filter_radius_ratio, filter_type="auto")
 
-Validate and provide recommendations for filter parameters.
+Print information about filter settings for debugging.
 """
-function validate_filter_parameters(grid::Grid, filter_radius_ratio::Float64)
-    char_size = estimate_characteristic_element_size(grid)
-    actual_radius = filter_radius_ratio * char_size
+function print_filter_info(grid::Grid, filter_radius_ratio::Float64, filter_type::String="auto")
+    char_size = estimate_element_size(grid)
+    element_sizes = calculate_element_sizes(grid)
+    size_variation = maximum(element_sizes) / minimum(element_sizes)
     
-    println("Filter parameter validation:")
-    println("  Characteristic element size: $char_size")
+    println("Density filter information:")
+    println("  Characteristic element size: $(round(char_size, digits=3))")
+    println("  Element size variation: $(round(size_variation, digits=2))")
     println("  Filter radius ratio: $filter_radius_ratio")
-    println("  Actual filter radius: $actual_radius")
     
-    if filter_radius_ratio < 1.0
-        @warn "Filter radius ratio < 1.0 may not provide sufficient mesh independence"
-    elseif filter_radius_ratio > 3.0
-        @warn "Filter radius ratio > 3.0 may over-smooth the design"
+    if filter_type == "auto"
+        actual_type = size_variation > 2.0 ? "adaptive" : "uniform"
+        println("  Filter type: $actual_type (automatically chosen)")
+    else
+        println("  Filter type: $filter_type (manually specified)")
     end
     
-    # Estimate how many elements are in filter radius
-    element_sizes = calculate_element_sizes(grid)
-    avg_size = sum(element_sizes) / length(element_sizes)
-    elements_in_radius = (actual_radius / avg_size)^3  # Rough estimate for 3D
-    
-    println("  Estimated elements in filter radius: $(round(Int, elements_in_radius))")
-    
-    if elements_in_radius < 8
-        @warn "Filter radius may be too small - fewer than 8 elements in filter region"
-    elseif elements_in_radius > 100
-        @warn "Filter radius may be too large - more than 100 elements in filter region"
+    if filter_type == "uniform" || (filter_type == "auto" && size_variation <= 2.0)
+        actual_radius = filter_radius_ratio * char_size
+        println("  Actual filter radius: $(round(actual_radius, digits=3))")
+    else
+        min_radius = filter_radius_ratio * minimum(element_sizes)
+        max_radius = filter_radius_ratio * maximum(element_sizes)
+        println("  Filter radius range: $(round(min_radius, digits=3)) - $(round(max_radius, digits=3))")
     end
 end
