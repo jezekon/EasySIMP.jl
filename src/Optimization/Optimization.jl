@@ -177,15 +177,24 @@ function simp_optimize(
         print_data("Compliance: $compliance")
         print_data("Volume fraction: $(current_volume / calculate_volume(grid))")
         
+        # Úprava pro Optimization.jl - řádek cca 158-162
+
         # Sensitivity analysis
         sensitivities = calculate_sensitivities(
             grid, dh, cellvalues, material_model, densities, u
         )
         
-        # Density filtering
-        filtered_sensitivities = apply_density_filter(
+        # Density filtering with proper element size scaling
+        # params.filter_radius is now interpreted as multiple of element size (like Sigmund's rmin)
+        # For example: filter_radius = 1.5 means 1.5 times the characteristic element size
+        filtered_sensitivities = apply_density_filter_scaled(
             grid, densities, sensitivities, params.filter_radius
         )
+        
+        # Validate filter parameters on first iteration
+        if iteration == 1
+            validate_filter_parameters(grid, params.filter_radius)
+        end
         
         # Update densities using OC
         densities = optimality_criteria_update(
