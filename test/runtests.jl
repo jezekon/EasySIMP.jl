@@ -424,7 +424,7 @@ using EasySIMP.Utils
               volume_fraction = 0.3,     # 30% objemový poměr
               max_iterations = 10,       # Více iterací pro komplexnější geometrii
               tolerance = 0.005,
-              filter_radius = 2.5,       # Větší filtr pro stabilitu
+              filter_radius = 2.0,       # Větší filtr pro stabilitu
               move_limit = 0.2,          # Zadaný limitní krok
               damping = 0.5              # Zadané tlumení
           )
