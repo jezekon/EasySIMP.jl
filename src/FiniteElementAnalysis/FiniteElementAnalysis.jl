@@ -614,24 +614,130 @@ function create_simp_material_model(E0::Float64, nu::Float64, Emin::Float64=1e-6
     return material_for_density
 end
 
-"""
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data)
 
-Assembles the global stiffness matrix using variable material properties based on element density.
+"""
+    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
+
+Enhanced SIMP assembly with optional element stiffness matrix caching.
+Uses cached unit matrices but does full assembly every iteration for numerical stability.
 
 Parameters:
 - `K`: global stiffness matrix (modified in-place)
-- `f`: global load vector (modified in-place)
+- `f`: global load vector (modified in-place) 
 - `dh`: DofHandler
 - `cellvalues`: CellValues for interpolation and integration
 - `material_model`: Function mapping density to material parameters (λ, μ)
 - `density_data`: Vector with density values for each cell
-
-Returns:
-- nothing (modifies K and f in-place)
+- `cache`: Optional Dict for caching unit element matrices (default: nothing)
 """
-function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data)
-    # Element stiffness matrix and internal force vector
+function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    fe = zeros(n_basefuncs)
+    
+    if cache === nothing
+        # Original method - no caching
+        assemble_original_method!(K, f, dh, cellvalues, material_model, density_data)
+        return
+    end
+    
+    # Enhanced method with cached unit matrices
+    n_cells = length(density_data)
+    
+    # Initialize cache on first call
+    if !haskey(cache, :unit_matrices)
+        initialize_cache!(cache, dh, cellvalues, material_model, n_cells)
+    end
+    
+    # Get cache data
+    unit_matrices = cache[:unit_matrices]
+    E0, ν, Emin, p = cache[:material_params]
+    
+    # Always do full assembly for numerical stability
+    # But use cached unit matrices for speed
+    fill!(K.nzval, 0.0)  # Clear matrix
+    assembler = start_assemble(K, f)
+    
+    # Full assembly using cached unit matrices
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        density = density_data[cell_id]
+        
+        # Calculate SIMP Young's modulus
+        E_current = Emin + (E0 - Emin) * density^p
+        
+        # Scale cached unit matrix by current Young's modulus
+        ke = E_current * unit_matrices[cell_id]
+        
+        # Assemble to global matrix
+        assemble!(assembler, celldofs(cell), ke, fe)
+    end
+    
+    println("Stiffness matrix assembled with cached unit matrices: $(n_cells) elements")
+end
+
+"""
+    initialize_cache!(cache, dh, cellvalues, material_model, n_cells)
+
+Initialize element stiffness matrix cache with unit matrices.
+"""
+function initialize_cache!(cache, dh, cellvalues, material_model, n_cells)
+    # Extract material parameters from SIMP model
+    λ_max, μ_max = material_model(1.0)  # Max density
+    λ_min, μ_min = material_model(1e-9) # Min density
+    
+    # Estimate E0, ν, Emin, p from material model behavior
+    # E = λ(3λ + 2μ)/(λ + μ) and ν = λ/(2(λ + μ))
+    E_max = λ_max * (3*λ_max + 2*μ_max) / (λ_max + μ_max)
+    E_min = λ_min * (3*λ_min + 2*μ_min) / (λ_min + μ_min)
+    ν = λ_max / (2 * (λ_max + μ_max))
+    
+    # Store material parameters
+    cache[:material_params] = (E_max, ν, E_min, 3.0)  # Assume p=3
+    
+    # Compute unit stiffness matrices (E=1)
+    λ_unit, μ_unit = create_material_model(1.0, ν)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
+    
+    print_info("Computing element stiffness matrix cache...")
+    
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        reinit!(cellvalues, cell)
+        
+        ke_unit = zeros(n_basefuncs, n_basefuncs)
+        
+        # Compute unit stiffness matrix
+        for q_point in 1:getnquadpoints(cellvalues)
+            dΩ = getdetJdV(cellvalues, q_point)
+            
+            for i in 1:n_basefuncs
+                ∇Ni = shape_gradient(cellvalues, q_point, i)
+                εi = symmetric(∇Ni)
+                
+                for j in 1:n_basefuncs
+                    ∇Nj = shape_gradient(cellvalues, q_point, j)
+                    εj = symmetric(∇Nj)
+                    
+                    σ = constitutive_relation(εj, λ_unit, μ_unit)
+                    ke_unit[i, j] += (εi ⊡ σ) * dΩ
+                end
+            end
+        end
+        
+        unit_matrices[cell_id] = ke_unit
+    end
+    
+    cache[:unit_matrices] = unit_matrices
+    print_success("Element cache initialized: $(n_cells) unit matrices")
+end
+
+"""
+    assemble_original_method!(K, f, dh, cellvalues, material_model, density_data)
+
+Original assembly method without caching (for reference/fallback).
+"""
+function assemble_original_method!(K, f, dh, cellvalues, material_model, density_data)
     n_basefuncs = getnbasefunctions(cellvalues)
     ke = zeros(n_basefuncs, n_basefuncs)
     fe = zeros(n_basefuncs)
@@ -684,6 +790,8 @@ function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, d
     
     println("Stiffness matrix assembled successfully with variable material properties")
 end
+
+
 
 """
     calculate_stresses_simp(u, dh, cellvalues, material_model, density_data)

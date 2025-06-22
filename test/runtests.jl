@@ -11,8 +11,8 @@ using EasySIMP.Utils
 
   RUN_BEAM_fixed = false
   RUN_BEAM_slide = false
-  RUN_BEAM_acc   = false
-  RUN_CHAPADLO   = true
+  RUN_BEAM_acc   = true
+  RUN_CHAPADLO   = false
 
   if RUN_BEAM_fixed
     @testset "Cantilever Beam SIMP (fixed)" begin
@@ -254,11 +254,12 @@ using EasySIMP.Utils
             tolerance = 0.005,
             filter_radius = 2.5,
             move_limit = 0.1,
-            damping = 0.5
+            damping = 0.5,
+            use_cache = true
         )
         
         # Run optimization
-        results = simp_optimize(
+        results = @time simp_optimize(
             grid, dh, cellvalues,
             [(dh, collect(force_nodes), [0.0, -1000., 0.0])], 
             [ch_sliding, ch_support], 
