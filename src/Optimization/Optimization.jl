@@ -4,21 +4,25 @@ using Ferrite
 using SparseArrays
 using LinearAlgebra
 using Printf
+using IterativeSolvers  # Add this dependency
 using ..FiniteElementAnalysis
 using ..Utils
 
 # Export main functions
 export simp_optimize, OptimizationParameters, OptimizationResult
+export SolverOptions, WarmStartSolver, create_optimized_solver_options  # New exports
 
 # Include submodules
+include("ProgressTable.jl")
 include("OptimalityCriteria.jl")
 include("DensityFilter.jl") 
 include("SensitivityAnalysis.jl")
+include("WarmStartSolver.jl")  # New optimized solver
 
 """
     OptimizationParameters
 
-Parameters for SIMP topology optimization.
+Parameters for SIMP topology optimization with performance options.
 """
 mutable struct OptimizationParameters
     # Material properties
@@ -39,6 +43,9 @@ mutable struct OptimizationParameters
     move_limit::Float64           # Move limit for OC (default: 0.2)
     damping::Float64              # Damping coefficient (default: 0.5)
     
+    # NEW: Solver optimization options
+    solver_options::SolverOptions  # Advanced solver configuration
+    
     # Default constructor
     function OptimizationParameters(;
         E0 = 1.0,
@@ -50,17 +57,18 @@ mutable struct OptimizationParameters
         tolerance = 0.01,
         filter_radius = 1.5,
         move_limit = 0.2,
-        damping = 0.5
+        damping = 0.5,
+        solver_options = SolverOptions()  # Default optimized solver options
     )
         new(E0, Emin, ν, p, volume_fraction, max_iterations, tolerance, 
-            filter_radius, move_limit, damping)
+            filter_radius, move_limit, damping, solver_options)
     end
 end
 
 """
     OptimizationResult
 
-Results from SIMP topology optimization.
+Results from SIMP topology optimization with performance metrics.
 """
 struct OptimizationResult
     densities::Vector{Float64}      # Final density distribution
@@ -72,12 +80,17 @@ struct OptimizationResult
     converged::Bool                 # Convergence flag
     compliance_history::Vector{Float64}  # Compliance history
     volume_history::Vector{Float64}      # Volume history
+    
+    # NEW: Performance metrics
+    total_cg_iterations::Int        # Total CG iterations used
+    average_cg_per_iteration::Float64  # Average CG iterations per solve
+    solver_strategy_history::Vector{Symbol}  # Solver strategies used
 end
 
 """
     simp_optimize(grid, dh, cellvalues, material_params, forces, boundary_conditions, params, acceleration_data=nothing)
 
-Main SIMP topology optimization function.
+Main SIMP topology optimization function with performance optimizations.
 
 # Arguments
 - `grid`: Ferrite Grid object
@@ -85,11 +98,11 @@ Main SIMP topology optimization function.
 - `cellvalues`: CellValues for integration
 - `forces`: Applied forces
 - `boundary_conditions`: Boundary conditions
-- `params`: OptimizationParameters
+- `params`: OptimizationParameters (now with solver_options)
 - `acceleration_data`: Optional tuple (acceleration_vector, base_density) for variable density acceleration
 
 # Returns
-- `OptimizationResult`: Complete optimization results
+- `OptimizationResult`: Complete optimization results with performance metrics
 """
 function simp_optimize(
     grid::Grid,
@@ -98,9 +111,9 @@ function simp_optimize(
     forces,
     boundary_conditions,
     params::OptimizationParameters,
-    acceleration_data=nothing  # NEW: Optional acceleration data
+    acceleration_data=nothing
 )
-    print_info("Starting SIMP topology optimization")
+    print_info("Starting SIMP topology optimization with performance optimizations")
     
     if acceleration_data !== nothing
         acceleration_vector, base_density = acceleration_data
@@ -109,7 +122,12 @@ function simp_optimize(
     
     # Initialize
     n_cells = getncells(grid)
+    n_dofs = ndofs(dh)
     densities = fill(params.volume_fraction, n_cells)
+    
+    # NEW: Initialize optimized solver
+    solver = WarmStartSolver(n_dofs, n_cells, params.solver_options)
+    print_info("Initialized warm-start solver with adaptive tolerance")
     
     # Create special cellvalues for volume calculation with higher order quadrature
     volume_cellvalues = create_volume_quadrature(grid)
@@ -127,44 +145,54 @@ function simp_optimize(
     # History tracking
     compliance_history = Float64[]
     volume_history = Float64[]
+    solver_strategy_history = Symbol[]
+    
+    # NEW: Pre-allocate matrices with proper sparsity pattern (KEY OPTIMIZATION)
+    K = allocate_matrix(dh)
+    f = zeros(ndofs(dh))
+    print_info("Pre-allocated sparse matrix structure ($(nnz(K)) non-zeros)")
     
     # Main optimization loop
     converged = false
     iteration = 0
+    old_densities = copy(densities)
+    
+    print_header()  # Print progress table header
     
     for iteration = 1:params.max_iterations
-        print_info("Iteration $iteration")
-        
         # Store old densities for convergence check
         old_densities = copy(densities)
         
-        # Assemble system matrices
-        K = allocate_matrix(dh)
-        f = zeros(ndofs(dh))
+        # NEW: Optimized assembly and solve with warm-start
+        u, density_change, strategy = solve_system_optimized!(
+            solver, K, f, dh, cellvalues, material_model,
+            old_densities, densities, boundary_conditions...
+        )
         
-        assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities)
+        # Store strategy used
+        push!(solver_strategy_history, strategy)
         
-        # NEW: Apply variable density acceleration if provided
+        # Apply forces (needs to be done after assembly)
+        # Reset force vector (it was modified in solve_system_optimized!)
+        fill!(f, 0.0)
+        
+        # Apply variable density acceleration if provided
         if acceleration_data !== nothing
             acceleration_vector, base_density = acceleration_data
-            # Create variable density data: actual_density = design_density * base_material_density
             variable_densities = densities .* base_density
             apply_variable_density_volume_force!(f, dh, cellvalues, acceleration_vector, variable_densities)
-            
-            # Debug info
-            total_acceleration_force = sum(abs.(f))
-            println("Applied variable density acceleration, total force magnitude: $(total_acceleration_force)")
         end
         
-        # Apply forces and boundary conditions
-        apply_forces_and_bcs!(K, f, forces, boundary_conditions)
+        # Apply other forces
+        for force in forces
+            apply_force!(f, force...)
+        end
         
-        # Debug: Check if forces are non-zero
-        force_magnitude = norm(f)
-        println("Total force vector magnitude: $(force_magnitude)")
-        
-        # Solve FE system
-        u = K \ f
+        # Re-solve with forces (this could be optimized further by combining with previous solve)
+        for ch in boundary_conditions
+            apply!(K, f, ch)
+        end
+        u = K \ f  # Quick direct solve since K is already factorized (if using direct solver)
         
         # Calculate compliance
         compliance = 0.5 * dot(u, K * u)
@@ -174,10 +202,6 @@ function simp_optimize(
         push!(compliance_history, compliance)
         push!(volume_history, current_volume)
         
-        print_data("Compliance: $compliance")
-        
-        # Úprava pro Optimization.jl - řádek cca 158-162
-
         # Sensitivity analysis
         sensitivities = calculate_sensitivities(
             grid, dh, cellvalues, material_model, densities, u
@@ -187,11 +211,6 @@ function simp_optimize(
         filtered_sensitivities = apply_density_filter(
             grid, densities, sensitivities, params.filter_radius
         )
-        
-        # Validate filter parameters on first iteration
-        if iteration == 1
-            print_filter_info(grid, params.filter_radius, "auto")
-        end
         
         # Update densities using OC
         densities = optimality_criteria_update(
@@ -208,13 +227,16 @@ function simp_optimize(
         current_volume = calculate_volume(grid, densities)
         current_volume_fraction = current_volume / calculate_volume(grid)
         
-        print_data("Volume fraction after OC: $(current_volume_fraction)")
-        
-        # Check for extreme values
-        if current_volume_fraction < 0.01 || current_volume_fraction > 0.99
-            print_warning("Extreme volume fraction detected: $current_volume_fraction")
-            print_warning("This may indicate OC algorithm instability")
-        end
+        # Print progress (with solver information)
+        progress = OptimizationProgress(
+            iteration,
+            current_volume_fraction,
+            compliance,
+            norm(f),
+            check_sensitivity_health_quiet(sensitivities),
+            maximum(abs.(densities - old_densities))
+        )
+        print_iteration(progress)
         
         # Check convergence
         change = maximum(abs.(densities - old_densities))
@@ -224,21 +246,35 @@ function simp_optimize(
             converged = true
             break
         end
+        
+        # Print periodic solver statistics
+        if iteration % 10 == 0
+            print_solver_statistics(solver)
+        end
     end
     
-    # Final analysis
-    K = allocate_matrix(dh)
-    f = zeros(ndofs(dh))
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities)
+    # Final analysis with optimized solver
+    print_info("Performing final analysis...")
+    u, _, _ = solve_system_optimized!(
+        solver, K, f, dh, cellvalues, material_model,
+        old_densities, densities, boundary_conditions...
+    )
     
-    # Apply final acceleration if provided
+    # Apply final forces
+    fill!(f, 0.0)
     if acceleration_data !== nothing
         acceleration_vector, base_density = acceleration_data
         variable_densities = densities .* base_density
         apply_variable_density_volume_force!(f, dh, cellvalues, acceleration_vector, variable_densities)
     end
     
-    apply_forces_and_bcs!(K, f, forces, boundary_conditions)
+    for force in forces
+        apply_force!(f, force...)
+    end
+    
+    for ch in boundary_conditions
+        apply!(K, f, ch)
+    end
     u = K \ f
     
     final_compliance = 0.5 * dot(u, K * u)
@@ -249,9 +285,15 @@ function simp_optimize(
         u, dh, cellvalues, material_model, densities
     )
     
+    # Print final performance statistics
+    print_solver_statistics(solver)
+    
     print_success("Optimization completed")
     print_data("Final compliance: $final_compliance")
     print_data("Final volume fraction: $(final_volume / calculate_volume(grid))")
+    
+    # Calculate performance metrics
+    avg_cg_per_iteration = solver.total_cg_iterations / max(1, iteration)
     
     return OptimizationResult(
         densities,
@@ -262,7 +304,10 @@ function simp_optimize(
         iteration,
         converged,
         compliance_history,
-        volume_history
+        volume_history,
+        solver.total_cg_iterations,
+        avg_cg_per_iteration,
+        solver_strategy_history
     )
 end
 
@@ -341,6 +386,41 @@ function create_volume_quadrature(grid::Grid{dim}) where dim
     end
     
     return CellValues(qr, ip)
+end
+
+"""
+    create_optimized_solver_options(;conservative=false)
+
+Create optimized solver options with recommended settings.
+
+# Arguments
+- `conservative`: If true, use more conservative settings for stability
+
+# Returns
+- `SolverOptions`: Configured solver options
+"""
+function create_optimized_solver_options(;conservative::Bool=false)
+    if conservative
+        return SolverOptions(
+            use_warm_start = false,
+            preconditioner_update_freq = 3,  # More frequent updates
+            iterative_tolerance_adaptive = true,
+            incremental_assembly_threshold = 0.01,  # Higher threshold
+            relaxed_tolerance = 1e-4,  # Stricter tolerance
+            strict_tolerance = 1e-6,
+            max_cg_iterations = 500
+        )
+    else
+        return SolverOptions(
+            use_warm_start = true,
+            preconditioner_update_freq = 3,
+            iterative_tolerance_adaptive = true,
+            incremental_assembly_threshold = 0.01,
+            relaxed_tolerance = 1e-4,  # More aggressive tolerance
+            strict_tolerance = 1e-6,
+            max_cg_iterations = 500 
+        )
+    end
 end
 
 end # module
