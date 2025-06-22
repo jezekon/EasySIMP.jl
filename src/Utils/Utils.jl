@@ -44,12 +44,12 @@ function calculate_volume(grid::Ferrite.Grid, density_data::Union{Vector{Float64
     # Choose appropriate reference shape based on cell type
     if cell_type <: Ferrite.Hexahedron
         # For 8-node hexahedral elements
-        # println("Calculating volume for hexahedral elements with density")
+        println("Calculating volume for hexahedral elements with density")
         ip = Lagrange{RefHexahedron, 1}()
         qr = QuadratureRule{RefHexahedron}(2)  # Higher-order quadrature for accuracy
     else  
         # Default to tetrahedron
-        # println("Calculating volume for tetrahedral elements with density")
+        println("Calculating volume for tetrahedral elements with density")
         ip = Lagrange{RefTetrahedron, 1}()
         qr = QuadratureRule{RefTetrahedron}(2)
     end
@@ -82,7 +82,7 @@ function calculate_volume(grid::Ferrite.Grid, density_data::Union{Vector{Float64
         total_volume += cell_volume * density
     end
     
-    # @info "Total weighted mesh volume: $total_volume cubic units"
+    @info "Total weighted mesh volume: $total_volume cubic units"
     return total_volume
 end
 
