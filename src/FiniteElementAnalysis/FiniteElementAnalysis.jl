@@ -128,7 +128,7 @@ function setup_problem(grid::Grid, interpolation_order::Int=1)
     
     # Allocate solution vectors and system matrices
     n_dofs = ndofs(dh)
-    println("Number of DOFs: $n_dofs")
+    print_success("FEM setup complete: $n_dofs DOFs")
     K = allocate_matrix(dh)
     f = zeros(n_dofs)
     
@@ -281,7 +281,7 @@ function select_nodes_by_plane(grid::Grid,
         end
     end
     
-    println("Selected $(length(selected_nodes)) nodes on the specified plane")
+    # println("Selected $(length(selected_nodes)) nodes on the specified plane")
     return selected_nodes
 end
 

@@ -153,7 +153,7 @@ function simp_optimize(
             
             # Debug info
             total_acceleration_force = sum(abs.(f))
-            print_data("Applied variable density acceleration, total force magnitude: $(total_acceleration_force)")
+            println("Applied variable density acceleration, total force magnitude: $(total_acceleration_force)")
         end
         
         # Apply forces and boundary conditions
@@ -161,7 +161,7 @@ function simp_optimize(
         
         # Debug: Check if forces are non-zero
         force_magnitude = norm(f)
-        print_data("Total force vector magnitude: $(force_magnitude)")
+        println("Total force vector magnitude: $(force_magnitude)")
         
         # Solve FE system
         u = K \ f
@@ -175,7 +175,6 @@ function simp_optimize(
         push!(volume_history, current_volume)
         
         print_data("Compliance: $compliance")
-        print_data("Volume fraction: $(current_volume / calculate_volume(grid))")
         
         # Úprava pro Optimization.jl - řádek cca 158-162
 
@@ -210,8 +209,6 @@ function simp_optimize(
         current_volume_fraction = current_volume / calculate_volume(grid)
         
         print_data("Volume fraction after OC: $(current_volume_fraction)")
-        print_data("Target volume fraction: $(params.volume_fraction)")
-        print_data("Volume constraint error: $(abs(current_volume_fraction - params.volume_fraction))")
         
         # Check for extreme values
         if current_volume_fraction < 0.01 || current_volume_fraction > 0.99
@@ -221,7 +218,6 @@ function simp_optimize(
         
         # Check convergence
         change = maximum(abs.(densities - old_densities))
-        print_data("Change: $change")
         
         if change < params.tolerance
             print_success("Converged after $iteration iterations")
