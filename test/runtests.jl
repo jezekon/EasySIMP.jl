@@ -282,7 +282,7 @@ using EasySIMP.Utils
           print_info("Running Chapadlo SIMP topology optimization")
           
           # Import mesh
-          grid = import_mesh("../data/stul14.vtu")
+          grid = import_mesh("../data/stul15.vtu")
           print_success("Chapadlo mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes")
                     
           # Material properties for Chapadlo
@@ -298,25 +298,20 @@ using EasySIMP.Utils
           
           # Setup FEM
           dh, cellvalues, K, f = setup_problem(grid)
-          print_success("FEM setup complete: $(ndofs(dh)) DOFs")
           
           # Boundary conditions - Vetknutí (Fixed support)
           # Omezená rovina XZ, y = 75, kruh r = 16.11, střed = [0, 75, 115]
           fixed_nodes = select_nodes_by_circle(grid, [0.0, 75.0, 115.0], [0.0, -1.0, 0.0], 16.11, 1e-3)
-          print_info("Found $(length(fixed_nodes)) fixed nodes for vetknutí")
           
           # Symetrie - celá rovina YZ, x = 0, nulový posuv ve směru x
           symmetry_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-3)
-          print_info("Found $(length(symmetry_nodes)) symmetry nodes on YZ plane (x=0)")
           
           # Load points
           # 1. Nožičky: rovina XY, z = -90, síla 2.5N
           nozicky_nodes = select_nodes_by_plane(grid, [0.0, 0.0, -90.0], [0.0, 0.0, 1.0], 1.0)
-          print_info("Found $(length(nozicky_nodes)) nodes for nožičky")
           
           # 2. Kamera: omezená rovina XY, z = 5, kruh r = 21.5, střed = [0, 0, 5], síla 1N
           kamera_nodes = select_nodes_by_circle(grid, [0.0, 0.0, 5.0], [0.0, 0.0, 1.0], 21.5, 1e-3)
-          print_info("Found $(length(kamera_nodes)) nodes for kamera")
 
           # Export boundary conditions for visualization
           print_info("Exporting boundary conditions for ParaView inspection...")
@@ -421,8 +416,8 @@ using EasySIMP.Utils
               Emin = 1e-6,
               ν = ν,
               p = 3.0,
-              volume_fraction = 0.3,     # 30% objemový poměr
-              max_iterations = 10,       # Více iterací pro komplexnější geometrii
+              volume_fraction = 0.4,     # 30% objemový poměr
+              max_iterations = 15,       # Více iterací pro komplexnější geometrii
               tolerance = 0.005,
               filter_radius = 2.0,       # Větší filtr pro stabilitu
               move_limit = 0.2,          # Zadaný limitní krok
@@ -446,7 +441,7 @@ using EasySIMP.Utils
               forces_list,
               [ch_fixed, ch_symmetry],  # Both boundary conditions
               opt_params,
-              # acceleration_data
+              acceleration_data
           )
           
           print_success("Chapadlo optimization completed!")
@@ -457,7 +452,7 @@ using EasySIMP.Utils
           
           # Export results
           results_data = create_results_data(grid, dh, results)
-          export_results_vtu(results_data, "chapadlo_optimization")
+          export_results_vtu(results_data, "chapadlo_optimization_velke")
           
           print_success("Chapadlo test completed successfully!")
           print_info("Results exported to: chapadlo_optimization.vtu")
