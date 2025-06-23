@@ -39,6 +39,9 @@ mutable struct OptimizationParameters
     move_limit::Float64           # Move limit for OC (default: 0.2)
     damping::Float64              # Damping coefficient (default: 0.5)
     
+    # Performance
+    use_cache::Bool               # Enable element matrix caching (default: true)
+    
     # Default constructor
     function OptimizationParameters(;
         E0 = 1.0,
@@ -50,15 +53,16 @@ mutable struct OptimizationParameters
         tolerance = 0.01,
         filter_radius = 1.5,
         move_limit = 0.2,
-        damping = 0.5
+        damping = 0.5,
+        use_cache = true
     )
         new(E0, Emin, ν, p, volume_fraction, max_iterations, tolerance, 
-            filter_radius, move_limit, damping)
+            filter_radius, move_limit, damping, use_cache)
     end
 end
 
 """
-    OptimizationResult
+    simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data=nothing)
 
 Results from SIMP topology optimization.
 """
@@ -98,7 +102,7 @@ function simp_optimize(
     forces,
     boundary_conditions,
     params::OptimizationParameters,
-    acceleration_data=nothing  # NEW: Optional acceleration data
+    acceleration_data=nothing
 )
     print_info("Starting SIMP topology optimization")
     
@@ -110,6 +114,12 @@ function simp_optimize(
     # Initialize
     n_cells = getncells(grid)
     densities = fill(params.volume_fraction, n_cells)
+    
+    # Create cache if enabled
+    cache = params.use_cache ? Dict{Symbol, Any}() : nothing
+    if cache !== nothing
+        print_info("Performance caching enabled")
+    end
     
     # Create special cellvalues for volume calculation with higher order quadrature
     volume_cellvalues = create_volume_quadrature(grid)
@@ -138,22 +148,17 @@ function simp_optimize(
         # Store old densities for convergence check
         old_densities = copy(densities)
         
-        # Assemble system matrices
+        # Assemble system matrices (with optional caching)
         K = allocate_matrix(dh)
         f = zeros(ndofs(dh))
         
-        assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities)
+        assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities, cache)
         
-        # NEW: Apply variable density acceleration if provided
+        # Apply variable density acceleration if provided
         if acceleration_data !== nothing
             acceleration_vector, base_density = acceleration_data
-            # Create variable density data: actual_density = design_density * base_material_density
             variable_densities = densities .* base_density
             apply_variable_density_volume_force!(f, dh, cellvalues, acceleration_vector, variable_densities)
-            
-            # Debug info
-            total_acceleration_force = sum(abs.(f))
-            println("Applied variable density acceleration, total force magnitude: $(total_acceleration_force)")
         end
         
         # Apply forces and boundary conditions
@@ -176,8 +181,6 @@ function simp_optimize(
         
         print_data("Compliance: $compliance")
         
-        # Úprava pro Optimization.jl - řádek cca 158-162
-
         # Sensitivity analysis
         sensitivities = calculate_sensitivities(
             grid, dh, cellvalues, material_model, densities, u
@@ -229,7 +232,7 @@ function simp_optimize(
     # Final analysis
     K = allocate_matrix(dh)
     f = zeros(ndofs(dh))
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities)
+    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities, cache)
     
     # Apply final acceleration if provided
     if acceleration_data !== nothing
