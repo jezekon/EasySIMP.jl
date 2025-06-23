@@ -183,8 +183,12 @@ function simp_optimize(
         print_data("Compliance: $compliance")
         
         # Sensitivity analysis
+        # sensitivities = calculate_sensitivities(
+        #     grid, dh, cellvalues, material_model, densities, u
+        # )
         sensitivities = calculate_sensitivities(
-            grid, dh, cellvalues, material_model, densities, u
+            grid, dh, cellvalues, densities, u, 
+            params.E0, params.Emin, params.ν, params.p
         )
         
         # Density filtering with proper element size scaling

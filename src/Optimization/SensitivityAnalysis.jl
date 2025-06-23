@@ -7,12 +7,12 @@ Calculates derivatives of objective function with respect to design variables.
 
 using Ferrite
 using LinearAlgebra
-using ..FiniteElementAnalysis
+using ..FiniteElementAnalysis: compute_lame_parameters
 
 export calculate_sensitivities, calculate_compliance_sensitivity
 
 """
-    calculate_sensitivities(grid, dh, cellvalues, material_model, densities, u)
+    calculate_sensitivities(grid, dh, cellvalues, densities, u, E0, Emin, ν, p)
 
 Calculate sensitivities of the objective function (compliance) with respect to element densities.
 
@@ -20,9 +20,12 @@ Calculate sensitivities of the objective function (compliance) with respect to e
 - `grid`: Ferrite Grid object
 - `dh`: DofHandler  
 - `cellvalues`: CellValues for integration
-- `material_model`: SIMP material model function
 - `densities`: Current density distribution
 - `u`: Displacement vector
+- `E0`: Base Young's modulus
+- `Emin`: Minimum Young's modulus
+- `ν`: Poisson's ratio
+- `p`: Penalization power
 
 # Returns
 - Vector of sensitivities ∂c/∂ρe for each element
@@ -41,9 +44,12 @@ function calculate_sensitivities(
     grid::Grid,
     dh::DofHandler,
     cellvalues,
-    material_model,
     densities::Vector{Float64},
-    u::Vector{Float64}
+    u::Vector{Float64},
+    E0::Float64,
+    Emin::Float64,
+    ν::Float64,
+    p::Float64
 )
     n_cells = getncells(grid)
     sensitivities = zeros(n_cells)
@@ -59,7 +65,7 @@ function calculate_sensitivities(
         
         # Calculate compliance sensitivity for this element
         sensitivities[cell_id] = calculate_compliance_sensitivity(
-            cell, cellvalues, material_model, density, u_element
+            cell, cellvalues, density, u_element, E0, Emin, ν, p
         )
     end
     
@@ -67,26 +73,38 @@ function calculate_sensitivities(
 end
 
 """
-    calculate_compliance_sensitivity(cell, cellvalues, material_model, density, u_element)
+    calculate_compliance_sensitivity(cell, cellvalues, density, u_element, E0, Emin, ν, p)
 
-Calculate compliance sensitivity for a single element.
+Calculate compliance sensitivity for a single element using SIMP parameters.
+
+# Arguments
+- `cell`: Current cell iterator
+- `cellvalues`: CellValues for integration
+- `density`: Element density
+- `u_element`: Element displacement vector
+- `E0`: Base Young's modulus
+- `Emin`: Minimum Young's modulus  
+- `ν`: Poisson's ratio
+- `p`: Penalization power
+
+# Returns
+- Compliance sensitivity ∂c/∂ρe for this element
 """
 function calculate_compliance_sensitivity(
     cell,
     cellvalues,
-    material_model,
     density::Float64,
-    u_element::Vector{Float64}
+    u_element::Vector{Float64},
+    E0::Float64,
+    Emin::Float64,
+    ν::Float64,
+    p::Float64
 )
-    # Get material parameters for current density
-    λ, μ = material_model(density)
-    
-    # Get base material parameters (for derivative calculation)
-    λ0, μ0 = material_model(1.0)  # Material parameters at full density
-    λmin, μmin = material_model(1e-9)  # Material parameters at void
-    
     # Reinitialize cell values
     reinit!(cellvalues, cell)
+    
+    # Calculate Lamé parameters for unit Young's modulus
+    λ0, μ0 = compute_lame_parameters(1.0, ν)
     
     # Calculate element stiffness matrix for unit Young's modulus
     n_basefuncs = getnbasefunctions(cellvalues)
@@ -114,11 +132,6 @@ function calculate_compliance_sensitivity(
     # For SIMP: E(ρ) = Emin + ρ^p * (E0 - Emin)
     # ∂E/∂ρ = p * ρ^(p-1) * (E0 - Emin)
     
-    # Assuming p = 3 (can be made parameter)
-    p = 3.0
-    E0 = 1.0  # Base Young's modulus
-    Emin = 1e-9  # Void Young's modulus
-    
     # Derivative of Young's modulus w.r.t. density
     dE_drho = p * density^(p-1) * (E0 - Emin)
     
@@ -127,4 +140,3 @@ function calculate_compliance_sensitivity(
     
     return sensitivity
 end
-
