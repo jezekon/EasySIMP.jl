@@ -171,9 +171,6 @@ Parameters:
 - `cache`: Optional Dict for caching unit element matrices (default: nothing)
 """
 function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    fe = zeros(n_basefuncs)
-    
     if cache !== nothing && haskey(cache, :unit_matrices)
         assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
     else
@@ -222,7 +219,6 @@ function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data,
     fe = zeros(n_basefuncs)
     
     unit_matrices = cache[:unit_matrices]
-    E0, ν, Emin, p = cache[:material_params]
     
     fill!(K.nzval, 0.0)
     assembler = start_assemble(K, f)
@@ -231,11 +227,15 @@ function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data,
         cell_id = cellid(cell)
         density = density_data[cell_id]
         
-        # Calculate SIMP Young's modulus
-        E_current = Emin + (E0 - Emin) * density^p
+        # Získej skalární faktor z material_model
+        λ_current, μ_current = material_model(density)
+        λ_unit, μ_unit = material_model(1.0)
         
-        # Scale cached unit matrix by current Young's modulus
-        ke = E_current * unit_matrices[cell_id]
+        # Scaling factor je poměr current/unit
+        scaling_factor = λ_current / λ_unit  # λ i μ mají stejný scaling
+        
+        # Škáluj cached unit matrix
+        ke = scaling_factor * unit_matrices[cell_id]
         
         assemble!(assembler, celldofs(cell), ke, fe)
     end
@@ -250,33 +250,10 @@ Initialize element stiffness matrix cache with unit matrices.
 FIXED: Uses actual parameters from material_model instead of hardcoded p=3.
 """
 function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
-    # Extract material parameters by testing material model
-    λ_max, μ_max = material_model(1.0)   # Max density
-    λ_min, μ_min = material_model(1e-9)  # Min density
+    # PŘÍMO EXTRAHUJ PARAMETRY Z OptimizationParameters místo odhadu
+    # (parametry se předají z optimization)
+    # Toto se upraví v ZMĚNĚ 3
     
-    # Calculate E0, Emin, ν from Lamé parameters
-    # E = μ(3λ + 2μ)/(λ + μ) and ν = λ/(2(λ + μ))
-    E_max = μ_max * (3*λ_max + 2*μ_max) / (λ_max + μ_max)
-    E_min = μ_min * (3*λ_min + 2*μ_min) / (λ_min + μ_min)
-    ν = λ_max / (2 * (λ_max + μ_max))
-    
-    # Estimate p by testing intermediate density
-    λ_mid, μ_mid = material_model(0.5)
-    E_mid = μ_mid * (3*λ_mid + 2*μ_mid) / (λ_mid + μ_mid)
-    
-    # Solve: E_mid = E_min + (E_max - E_min) * 0.5^p for p
-    if E_mid > E_min && E_max > E_min
-        ratio = (E_mid - E_min) / (E_max - E_min)
-        p_estimated = log(ratio) / log(0.5)
-    else
-        p_estimated = 3.0  # Fallback
-    end
-    
-    # Store material parameters - NO MORE HARDCODED p=3!
-    cache[:material_params] = (E_max, ν, E_min, p_estimated)
-    
-    # Compute unit stiffness matrices (E=1)
-    λ_unit, μ_unit = compute_lame_parameters(1.0, ν)
     n_basefuncs = getnbasefunctions(cellvalues)
     unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
     
@@ -285,7 +262,10 @@ function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
         reinit!(cellvalues, cell)
-        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
+        
+        # Použij jednotkové materiálové parametry (budou se později skalovat)
+        λ1, μ1 = material_model(1.0)  # Pro hustotu = 1
+        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ1, μ1)
         unit_matrices[cell_id] = ke_unit
     end
     
