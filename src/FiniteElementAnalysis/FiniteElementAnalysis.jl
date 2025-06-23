@@ -7,13 +7,10 @@ using StaticArrays
 using ..Utils
 
 export create_material_model, setup_problem,
-       select_nodes_by_plane, select_nodes_by_circle, get_node_dofs,
+       select_nodes_by_plane, select_nodes_by_circle, get_node_dofs, apply_variable_density_volume_force!,
        apply_fixed_boundary!, apply_sliding_boundary!, apply_force!, solve_system,
        calculate_stresses, create_simp_material_model, assemble_stiffness_matrix_simp!,
        calculate_stresses_simp, solve_system_simp
-
-include("VolumeForce.jl")
-export apply_volume_force!, apply_gravity!, apply_acceleration!, apply_variable_density_volume_force!
 
 # ============================================================================
 # UNIFIED MATERIAL CALCULATIONS - Odstranění duplicit
@@ -534,6 +531,83 @@ function apply_force!(f, dh, nodes, force_vector)
     end
     
     println("Applied force $force_vector distributed over $(length(nodes)) nodes")
+end
+
+"""
+    apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vector, density_data)
+
+Applies volume forces with variable density distribution (for SIMP topology optimization).
+
+Parameters:
+- `f`: global load vector (modified in-place)
+- `dh`: DofHandler
+- `cellvalues`: CellValues for interpolation and integration
+- `body_force_vector`: Body force per unit mass [Fx, Fy, Fz] in N/kg
+- `density_data`: Vector with density values for each cell
+
+Returns:
+- nothing (modifies f in-place)
+"""
+function apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vector, density_data)
+    # Number of basis functions per element
+    n_basefuncs = getnbasefunctions(cellvalues)
+    
+    # Element load vector for body forces
+    fe_body = zeros(n_basefuncs)
+    
+    # Track total applied force
+    total_force_applied = zeros(3)
+    
+    # Iterate over all cells
+    for cell in CellIterator(dh)
+        # Get cell ID and corresponding density
+        cell_id = cellid(cell)
+        density = density_data[cell_id]
+        
+        # Skip if density is negligible (for SIMP optimization)
+        if density < 1e-6
+            continue
+        end
+        
+        # Reinitialize cell values
+        reinit!(cellvalues, cell)
+        fill!(fe_body, 0.0)
+        
+        # Get cell DOFs
+        cell_dofs = celldofs(cell)
+        
+        # Integrate body force over element volume
+        for q_point in 1:getnquadpoints(cellvalues)
+            dΩ = getdetJdV(cellvalues, q_point)
+            
+            for i in 1:n_basefuncs
+                # Get vector shape function value
+                N_vec = shape_value(cellvalues, q_point, i)
+                
+                # Calculate DOF component
+                dofs_per_node = 3
+                dof_component = mod(i - 1, dofs_per_node) + 1
+                
+                # Extract scalar component
+                N_scalar = N_vec[dof_component]
+                
+                # Apply variable density body force
+                body_force_contribution = density * body_force_vector[dof_component] * N_scalar * dΩ
+                fe_body[i] += body_force_contribution
+                
+                # Track total force
+                total_force_applied[dof_component] += body_force_contribution
+            end
+        end
+        
+        # Add to global load vector
+        for (local_dof, global_dof) in enumerate(cell_dofs)
+            f[global_dof] += fe_body[local_dof]
+        end
+    end
+    
+    println("Applied variable density volume force")
+    println("Total force applied: $total_force_applied N")
 end
 
 # ============================================================================
