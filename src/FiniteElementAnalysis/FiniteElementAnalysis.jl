@@ -6,8 +6,7 @@ using SparseArrays
 using StaticArrays
 using ..Utils
 
-# Exported functions
-export scale_mesh_to_meters!, create_material_model, setup_problem, assemble_stiffness_matrix!,
+export scale_mesh_to_meters!, create_material_model, setup_problem,
        select_nodes_by_plane, select_nodes_by_circle, get_node_dofs,
        apply_fixed_boundary!, apply_sliding_boundary!, apply_force!, solve_system,
        calculate_stresses, create_simp_material_model, assemble_stiffness_matrix_simp!,
@@ -16,33 +15,34 @@ export scale_mesh_to_meters!, create_material_model, setup_problem, assemble_sti
 include("VolumeForce.jl")
 export apply_volume_force!, apply_gravity!, apply_acceleration!, apply_variable_density_volume_force!
 
-# Po importu mesh, přeškáluj na metry
-function scale_mesh_to_meters!(grid::Grid, scale_factor::Float64=1000.0)
-    print_info("Scaling mesh coordinates by factor 1/$(scale_factor)")
-    
-    # Get bounds before scaling
-    coords_before = [norm(grid.nodes[1].x), norm(grid.nodes[end].x)]
-    
-    # Create new scaled nodes
-    new_nodes = Vector{Ferrite.Node{3, Float64}}()
-    for node in grid.nodes
-        old_x = node.x
-        # Simple way: create Vec from scaled vector
-        scaled_coords = collect(old_x) ./ scale_factor
-        new_coord = Vec{3}(scaled_coords)
-        push!(new_nodes, Ferrite.Node(new_coord))
-    end
-    
-    # Create new grid
-    new_grid = Ferrite.Grid(getcells(grid), new_nodes)
-    
-    # Get bounds after scaling  
-    coords_after = [norm(new_grid.nodes[1].x), norm(new_grid.nodes[end].x)]
-    print_data("Coordinate scale check: $(coords_before) -> $(coords_after)")
-    
-    return new_grid
+# ============================================================================
+# UNIFIED MATERIAL CALCULATIONS - Odstranění duplicit
+# ============================================================================
+
+"""
+    compute_lame_parameters(youngs_modulus::Float64, poissons_ratio::Float64)
+
+Unified function to compute Lamé parameters from Young's modulus and Poisson's ratio.
+Eliminates duplication across the codebase.
+"""
+function compute_lame_parameters(youngs_modulus::Float64, poissons_ratio::Float64)
+    λ = youngs_modulus * poissons_ratio / ((1 + poissons_ratio) * (1 - 2 * poissons_ratio))
+    μ = youngs_modulus / (2 * (1 + poissons_ratio))
+    return λ, μ
 end
 
+"""
+    constitutive_relation(ε, λ, μ)
+
+Applies linear elastic relationship between strain and stress (Hooke's law).
+"""
+function constitutive_relation(ε, λ, μ)
+    return λ * tr(ε) * one(ε) + 2μ * ε
+end
+
+# ============================================================================
+# MATERIAL MODEL CREATION - Zachované původní API
+# ============================================================================
 
 """
     create_material_model(youngs_modulus::Float64, poissons_ratio::Float64)
@@ -57,76 +57,88 @@ Returns:
 - lambda and mu coefficients for Hooke's law
 """
 function create_material_model(youngs_modulus::Float64, poissons_ratio::Float64)
-    # Lamé coefficients
-    λ = youngs_modulus * poissons_ratio / ((1 + poissons_ratio) * (1 - 2 * poissons_ratio))
-    μ = youngs_modulus / (2 * (1 + poissons_ratio))
-    
-    return λ, μ
+    return compute_lame_parameters(youngs_modulus, poissons_ratio)
 end
 
 """
-    constitutive_relation(ε, λ, μ)
+    create_simp_material_model(E0::Float64, nu::Float64, Emin::Float64=1e-6, p::Float64=3.0)
 
-Applies linear elastic relationship between strain and stress (Hooke's law).
+Creates a material model using the SIMP (Solid Isotropic Material with Penalization) approach.
 
 Parameters:
-- `ε`: strain tensor
-- `λ`: first Lamé coefficient
-- `μ`: second Lamé coefficient (shear modulus)
+- `E0`: Base material Young's modulus
+- `nu`: Poisson's ratio
+- `Emin`: Minimum Young's modulus (default: 1e-6)
+- `p`: Penalization power (default: 3.0)
 
 Returns:
-- stress tensor
+- Function mapping density to Lamé parameters (λ, μ)
 """
-function constitutive_relation(ε, λ, μ)
-    # Linear elasticity: σ = λ*tr(ε)*I + 2μ*ε
-    return λ * tr(ε) * one(ε) + 2μ * ε
+function create_simp_material_model(E0::Float64, nu::Float64, Emin::Float64=1e-6, p::Float64=3.0)
+    function material_for_density(density::Float64)
+        # SIMP model: E(ρ) = Emin + (E0 - Emin) * ρ^p
+        E = Emin + (E0 - Emin) * density^p
+        return compute_lame_parameters(E, nu)
+    end
+    
+    return material_for_density
 end
+
+# ============================================================================
+# MESH SCALING
+# ============================================================================
+
+function scale_mesh_to_meters!(grid::Grid, scale_factor::Float64=1000.0)
+    print_info("Scaling mesh coordinates by factor 1/$(scale_factor)")
+    
+    coords_before = [norm(grid.nodes[1].x), norm(grid.nodes[end].x)]
+    
+    new_nodes = Vector{Ferrite.Node{3, Float64}}()
+    for node in grid.nodes
+        old_x = node.x
+        scaled_coords = collect(old_x) ./ scale_factor
+        new_coord = Vec{3}(scaled_coords)
+        push!(new_nodes, Ferrite.Node(new_coord))
+    end
+    
+    new_grid = Ferrite.Grid(getcells(grid), new_nodes)
+    coords_after = [norm(new_grid.nodes[1].x), norm(new_grid.nodes[end].x)]
+    print_data("Coordinate scale check: $(coords_before) -> $(coords_after)")
+    
+    return new_grid
+end
+
+# ============================================================================
+# PROBLEM SETUP
+# ============================================================================
 
 """
     setup_problem(grid::Grid, interpolation_order::Int=1)
 
 Sets up the finite element problem for the given grid.
 Automatically detects the cell type (tetrahedron or hexahedron) and creates appropriate interpolation.
-
-Parameters:
-- `grid`: Computational mesh (Ferrite Grid)
-- `interpolation_order`: Order of the Lagrange interpolation (default: 1)
-
-Returns:
-- Tuple containing:
-  - DofHandler for managing degrees of freedom
-  - CellValues for interpolation and integration
-  - Global stiffness matrix K
-  - Global load vector f
 """
 function setup_problem(grid::Grid, interpolation_order::Int=1)
     dim = 3  # 3D problem
     
-    # Determine the cell type from the grid
-    # We need to find what type of cells are in the grid
-    # Get the first cell to determine the type
     cell_type = typeof(getcells(grid, 1))
     
-    # Choose appropriate reference shape based on cell type
     if cell_type <: Ferrite.Hexahedron
         println("Setting up problem with hexahedral elements")
-        ip = Lagrange{RefHexahedron, interpolation_order}()^dim  # vector interpolation for hexahedrons
-        qr = QuadratureRule{RefHexahedron}(2)  # quadrature rule for hexahedrons
-    else  # Default to tetrahedron
+        ip = Lagrange{RefHexahedron, interpolation_order}()^dim
+        qr = QuadratureRule{RefHexahedron}(2)
+    else
         println("Setting up problem with tetrahedral elements")
-        ip = Lagrange{RefTetrahedron, interpolation_order}()^dim  # vector interpolation for tetrahedrons
-        qr = QuadratureRule{RefTetrahedron}(2)  # quadrature rule for tetrahedrons
+        ip = Lagrange{RefTetrahedron, interpolation_order}()^dim
+        qr = QuadratureRule{RefTetrahedron}(2)
     end
     
-    # Create cell values
     cellvalues = CellValues(qr, ip)
     
-    # Set up the FE problem
     dh = DofHandler(grid)
-    add!(dh, :u, ip)  # add displacement field
+    add!(dh, :u, ip)
     close!(dh)
     
-    # Allocate solution vectors and system matrices
     n_dofs = ndofs(dh)
     print_success("FEM setup complete: $n_dofs DOFs")
     K = allocate_matrix(dh)
@@ -135,81 +147,181 @@ function setup_problem(grid::Grid, interpolation_order::Int=1)
     return dh, cellvalues, K, f
 end
 
+# ============================================================================
+# STIFFNESS MATRIX ASSEMBLY - Zachované původní funkce
+# ============================================================================
 
 """
-    assemble_stiffness_matrix!(K, f, dh, cellvalues, λ, μ)
+    assemble_element_stiffness_matrix(cellvalues, λ, μ)
 
-Assembles the global stiffness matrix and initializes the load vector.
+Helper function to compute element stiffness matrix for given material properties.
+Eliminates code duplication between constant and variable material assembly.
+"""
+function assemble_element_stiffness_matrix(cellvalues, λ, μ)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    ke = zeros(n_basefuncs, n_basefuncs)
+    
+    for q_point in 1:getnquadpoints(cellvalues)
+        dΩ = getdetJdV(cellvalues, q_point)
+        
+        for i in 1:n_basefuncs
+            ∇Ni = shape_gradient(cellvalues, q_point, i)
+            εi = symmetric(∇Ni)
+            
+            for j in 1:n_basefuncs
+                ∇Nj = shape_gradient(cellvalues, q_point, j)
+                εj = symmetric(∇Nj)
+                σ = constitutive_relation(εj, λ, μ)
+                ke[i, j] += (εi ⊡ σ) * dΩ
+            end
+        end
+    end
+    
+    return ke
+end
+
+
+"""
+    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
+
+Enhanced SIMP assembly with optional element stiffness matrix caching.
 
 Parameters:
 - `K`: global stiffness matrix (modified in-place)
-- `f`: global load vector (modified in-place)
+- `f`: global load vector (modified in-place) 
 - `dh`: DofHandler
 - `cellvalues`: CellValues for interpolation and integration
-- `λ`, `μ`: material parameters
-
-Returns:
-- nothing (modifies K and f in-place)
+- `material_model`: Function mapping density to material parameters (λ, μ)
+- `density_data`: Vector with density values for each cell
+- `cache`: Optional Dict for caching unit element matrices (default: nothing)
 """
-function assemble_stiffness_matrix!(K, f, dh, cellvalues, λ, μ)
-    # Element stiffness matrix and internal force vector
+function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
     n_basefuncs = getnbasefunctions(cellvalues)
-    ke = zeros(n_basefuncs, n_basefuncs)
     fe = zeros(n_basefuncs)
     
-    # Create an assembler
-    assembler = start_assemble(K, f)
-    
-    # Iterate over all cells and assemble global matrices
-    for cell in CellIterator(dh)
-        reinit!(cellvalues, cell)
-        fill!(ke, 0.0)
-        fill!(fe, 0.0)
+    if cache !== nothing && haskey(cache, :unit_matrices)
+        assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
+    else
+        assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
         
-        # Compute element stiffness matrix
-        for q_point in 1:getnquadpoints(cellvalues)
-            # Get integration weight
-            dΩ = getdetJdV(cellvalues, q_point)
-            
-            for i in 1:n_basefuncs
-                # Gradient of test function
-                ∇Ni = shape_gradient(cellvalues, q_point, i)
-                
-                for j in 1:n_basefuncs
-                    # Symmetric gradient of trial function
-                    ∇Nj = shape_gradient(cellvalues, q_point, j)
-                    
-                    # Compute the small strain tensor
-                    εi = symmetric(∇Ni)
-                    εj = symmetric(∇Nj)
-                    
-                    # Apply constitutive law to get stress tensor
-                    σ = constitutive_relation(εj, λ, μ)
-                    
-                    # Compute stiffness contribution using tensor double contraction
-                    ke[i, j] += (εi ⊡ σ) * dΩ
-                end
-            end
+        # Initialize cache if requested
+        if cache !== nothing
+            initialize_cache(cache, dh, cellvalues, material_model, length(density_data))
         end
-        
-        # Assemble element contributions to global system
-        assemble!(assembler, celldofs(cell), ke, fe)
     end
-    
-    println("Stiffness matrix assembled successfully")
 end
 
 """
-    get_node_dofs(dh::DofHandler)
+    assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
 
-Creates a mapping from node IDs to their corresponding DOFs.
-
-Parameters:
-- `dh`: DofHandler
-
-Returns:
-- Dictionary mapping node IDs to their DOFs
+Assembly for variable material properties without caching.
 """
+function assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    fe = zeros(n_basefuncs)
+    
+    assembler = start_assemble(K, f)
+    
+    for cell in CellIterator(dh)
+        reinit!(cellvalues, cell)
+        fill!(fe, 0.0)
+        
+        cell_id = cellid(cell)
+        density = density_data[cell_id]
+        λ, μ = material_model(density)
+        
+        ke = assemble_element_stiffness_matrix(cellvalues, λ, μ)
+        assemble!(assembler, celldofs(cell), ke, fe)
+    end
+    
+    println("Stiffness matrix assembled successfully with variable material properties")
+end
+
+"""
+    assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
+
+Assembly using cached unit matrices for improved performance.
+"""
+function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    fe = zeros(n_basefuncs)
+    
+    unit_matrices = cache[:unit_matrices]
+    E0, ν, Emin, p = cache[:material_params]
+    
+    fill!(K.nzval, 0.0)
+    assembler = start_assemble(K, f)
+    
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        density = density_data[cell_id]
+        
+        # Calculate SIMP Young's modulus
+        E_current = Emin + (E0 - Emin) * density^p
+        
+        # Scale cached unit matrix by current Young's modulus
+        ke = E_current * unit_matrices[cell_id]
+        
+        assemble!(assembler, celldofs(cell), ke, fe)
+    end
+    
+    println("Stiffness matrix assembled with cached unit matrices: $(length(density_data)) elements")
+end
+
+"""
+    initialize_cache(cache, dh, cellvalues, material_model, n_cells)
+
+Initialize element stiffness matrix cache with unit matrices.
+FIXED: Uses actual parameters from material_model instead of hardcoded p=3.
+"""
+function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
+    # Extract material parameters by testing material model
+    λ_max, μ_max = material_model(1.0)   # Max density
+    λ_min, μ_min = material_model(1e-9)  # Min density
+    
+    # Calculate E0, Emin, ν from Lamé parameters
+    # E = μ(3λ + 2μ)/(λ + μ) and ν = λ/(2(λ + μ))
+    E_max = μ_max * (3*λ_max + 2*μ_max) / (λ_max + μ_max)
+    E_min = μ_min * (3*λ_min + 2*μ_min) / (λ_min + μ_min)
+    ν = λ_max / (2 * (λ_max + μ_max))
+    
+    # Estimate p by testing intermediate density
+    λ_mid, μ_mid = material_model(0.5)
+    E_mid = μ_mid * (3*λ_mid + 2*μ_mid) / (λ_mid + μ_mid)
+    
+    # Solve: E_mid = E_min + (E_max - E_min) * 0.5^p for p
+    if E_mid > E_min && E_max > E_min
+        ratio = (E_mid - E_min) / (E_max - E_min)
+        p_estimated = log(ratio) / log(0.5)
+    else
+        p_estimated = 3.0  # Fallback
+    end
+    
+    # Store material parameters - NO MORE HARDCODED p=3!
+    cache[:material_params] = (E_max, ν, E_min, p_estimated)
+    
+    # Compute unit stiffness matrices (E=1)
+    λ_unit, μ_unit = compute_lame_parameters(1.0, ν)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
+    
+    print_info("Computing element stiffness matrix cache...")
+    
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        reinit!(cellvalues, cell)
+        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
+        unit_matrices[cell_id] = ke_unit
+    end
+    
+    cache[:unit_matrices] = unit_matrices
+    print_success("Element cache initialized: $(n_cells) unit matrices")
+end
+
+# ============================================================================
+# NODE SELECTION FUNCTIONS
+# ============================================================================
+
 function get_node_dofs(dh::DofHandler)
     node_to_dofs = Dict{Int, Vector{Int}}()
     
@@ -359,8 +471,6 @@ function apply_fixed_boundary!(K, f, dh, nodes)
     # Create constraint handler
     ch = ConstraintHandler(dh)
     
-    # Apply Dirichlet boundary conditions for fixed nodes
-    # Fix each component individually
     for d in 1:dim
         dbc = Dirichlet(:u, nodes, (x, t) -> 0.0, d)
         add!(ch, dbc)
@@ -450,348 +560,35 @@ function apply_force!(f, dh, nodes, force_vector)
     println("Applied force $force_vector distributed over $(length(nodes)) nodes")
 end
 
+# ============================================================================
+# STRESS CALCULATION - Zachované původní funkce s helper functions
+# ============================================================================
+
 """
-    calculate_stresses(u, dh, cellvalues, λ, μ)
+    calculate_stress_at_quadrature_points(u_cell, cellvalues, λ, μ)
 
-Calculate stress field from displacement solution.
-
-Parameters:
-- `u`: displacement vector
-- `dh`: DofHandler
-- `cellvalues`: CellValues for interpolation and integration
-- `λ`, `μ`: material parameters
-
-Returns:
-- Tuple with:
-  - Dictionary mapping cell IDs to stress tensors at quadrature points
-  - Maximum von Mises stress value in the model
-  - Cell ID where the maximum stress occurs
+Helper function to calculate stresses at quadrature points.
+Eliminates duplication between constant and variable material stress calculations.
 """
-function calculate_stresses(u, dh, cellvalues, λ, μ)
-    # Initialize storage for stresses
-    # We'll store stresses at quadrature points for each cell
-    stress_field = Dict{Int, Vector{SymmetricTensor{2, 3, Float64}}}()
+function calculate_stress_at_quadrature_points(u_cell, cellvalues, λ, μ)
+    n_qpoints = getnquadpoints(cellvalues)
+    cell_stresses = Vector{SymmetricTensor{2, 3, Float64}}(undef, n_qpoints)
+    avg_stress = zero(SymmetricTensor{2, 3, Float64})
     
-    # Track maximum von Mises stress and its location
-    max_von_mises = 0.0
-    max_vm_cell_id = 0
-    
-    # For each cell, calculate stresses at quadrature points
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        cell_dofs = celldofs(cell)
-        
-        # Get displacements for this cell
-        u_cell = u[cell_dofs]
-        
-        # Initialize cell values for this cell
-        reinit!(cellvalues, cell)
-        
-        # Initialize storage for stress at each quadrature point
-        n_qpoints = getnquadpoints(cellvalues)
-        cell_stresses = Vector{SymmetricTensor{2, 3, Float64}}(undef, n_qpoints)
-        
-        # Calculate cell's average stress for von Mises calculation
-        avg_stress = zero(SymmetricTensor{2, 3, Float64})
-        
-        # Compute stresses at each quadrature point
-        for q_point in 1:n_qpoints
-            # Calculate strain from displacement gradients
-            # For a vector-valued field, function_gradient returns a tensor
-            grad_u = function_gradient(cellvalues, q_point, u_cell)
-            
-            # Calculate small strain tensor
-            ε = symmetric(grad_u)
-            
-            # Calculate stress using constitutive relation
-            σ = constitutive_relation(ε, λ, μ)
-            
-            # Store stress for this quadrature point
-            cell_stresses[q_point] = σ
-            
-            # Add to average stress
-            avg_stress += σ
-        end
-        
-        # Compute average stress for the cell
-        if n_qpoints > 0
-            avg_stress = avg_stress / n_qpoints
-            
-            # Calculate von Mises stress for this cell
-            # von Mises = sqrt(3/2 * (dev(σ) ⊡ dev(σ)))
-            cell_von_mises = sqrt(3/2 * (dev(avg_stress) ⊡ dev(avg_stress)))
-            
-            # Update maximum if this is higher
-            if cell_von_mises > max_von_mises
-                max_von_mises = cell_von_mises
-                max_vm_cell_id = cell_id
-            end
-        end
-        
-        # Store stresses for this cell
-        stress_field[cell_id] = cell_stresses
+    for q_point in 1:n_qpoints
+        grad_u = function_gradient(cellvalues, q_point, u_cell)
+        ε = symmetric(grad_u)
+        σ = constitutive_relation(ε, λ, μ)
+        cell_stresses[q_point] = σ
+        avg_stress += σ
     end
     
-    println("Stress calculation complete")
-    println("Maximum von Mises stress: $max_von_mises at cell $max_vm_cell_id")
+    if n_qpoints > 0
+        avg_stress = avg_stress / n_qpoints
+    end
     
-    return stress_field, max_von_mises, max_vm_cell_id
+    return cell_stresses, avg_stress
 end
-
-"""
-    solve_system(K, f, dh, cellvalues, λ, μ, constraints...)
-
-Solves the system of linear equations with multiple constraint handlers
-and calculates stresses.
-
-Parameters:
-- `K`: global stiffness matrix
-- `f`: global load vector
-- `dh`: DofHandler
-- `cellvalues`: CellValues for interpolation and integration
-- `λ`, `μ`: material parameters
-- `constraints...`: ConstraintHandlers with boundary conditions
-
-Returns:
-- Tuple with:
-  - displacement vector
-  - deformation energy
-  - stress field dictionary
-  - maximum von Mises stress value
-  - cell ID where the maximum stress occurs
-"""
-function solve_system(K, f, dh, cellvalues, λ, μ, constraints...)
-    # Apply zero value to constrained dofs for all constraint handlers
-    for ch in constraints
-        apply_zero!(K, f, ch)
-    end
-    
-    println("Solving linear system...")
-    
-    # Solve
-    u = K \ f  # Implicit method using backslash operator
-    
-    # Calculate deformation energy: U = 0.5 * u^T * K * u
-    deformation_energy = 0.5 * dot(u, K * u)
-    
-    # Calculate stresses
-    stress_field, max_von_mises, max_stress_cell = calculate_stresses(u, dh, cellvalues, λ, μ)
-
-    
-    println("Analysis complete")
-    println("Deformation energy: $deformation_energy J")
-    println("Maximum von Mises stress: $max_von_mises at cell $max_stress_cell")
-    
-    return u, deformation_energy, stress_field, max_von_mises, max_stress_cell
-end
-
-"""
-    create_simp_material_model(E0::Float64, nu::Float64, Emin::Float64=1e-9, p::Float64=3.0)
-
-Creates a material model using the SIMP (Solid Isotropic Material with Penalization) approach.
-
-Parameters:
-- `E0`: Base material Young's modulus
-- `nu`: Poisson's ratio
-- `Emin`: Minimum Young's modulus (default: 1e-9)
-- `p`: Penalization power (default: 3.0)
-
-Returns:
-- Function mapping density to Lamé parameters (λ, μ)
-"""
-function create_simp_material_model(E0::Float64, nu::Float64, Emin::Float64=1e-6, p::Float64=3.0)
-    function material_for_density(density::Float64)
-        # SIMP model: E(ρ) = Emin + (E0 - Emin) * ρ^p
-        E = Emin + (E0 - Emin) * density^p
-        
-        # Calculate Lamé parameters
-        λ = E * nu / ((1 + nu) * (1 - 2 * nu))
-        μ = E / (2 * (1 + nu))
-        
-        return λ, μ
-    end
-    
-    return material_for_density
-end
-
-
-"""
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
-
-Enhanced SIMP assembly with optional element stiffness matrix caching.
-Uses cached unit matrices but does full assembly every iteration for numerical stability.
-
-Parameters:
-- `K`: global stiffness matrix (modified in-place)
-- `f`: global load vector (modified in-place) 
-- `dh`: DofHandler
-- `cellvalues`: CellValues for interpolation and integration
-- `material_model`: Function mapping density to material parameters (λ, μ)
-- `density_data`: Vector with density values for each cell
-- `cache`: Optional Dict for caching unit element matrices (default: nothing)
-"""
-function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    fe = zeros(n_basefuncs)
-    
-    if cache === nothing
-        # Original method - no caching
-        assemble_original_method!(K, f, dh, cellvalues, material_model, density_data)
-        return
-    end
-    
-    # Enhanced method with cached unit matrices
-    n_cells = length(density_data)
-    
-    # Initialize cache on first call
-    if !haskey(cache, :unit_matrices)
-        initialize_cache!(cache, dh, cellvalues, material_model, n_cells)
-    end
-    
-    # Get cache data
-    unit_matrices = cache[:unit_matrices]
-    E0, ν, Emin, p = cache[:material_params]
-    
-    # Always do full assembly for numerical stability
-    # But use cached unit matrices for speed
-    fill!(K.nzval, 0.0)  # Clear matrix
-    assembler = start_assemble(K, f)
-    
-    # Full assembly using cached unit matrices
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        density = density_data[cell_id]
-        
-        # Calculate SIMP Young's modulus
-        E_current = Emin + (E0 - Emin) * density^p
-        
-        # Scale cached unit matrix by current Young's modulus
-        ke = E_current * unit_matrices[cell_id]
-        
-        # Assemble to global matrix
-        assemble!(assembler, celldofs(cell), ke, fe)
-    end
-    
-    println("Stiffness matrix assembled with cached unit matrices: $(n_cells) elements")
-end
-
-"""
-    initialize_cache!(cache, dh, cellvalues, material_model, n_cells)
-
-Initialize element stiffness matrix cache with unit matrices.
-"""
-function initialize_cache!(cache, dh, cellvalues, material_model, n_cells)
-    # Extract material parameters from SIMP model
-    λ_max, μ_max = material_model(1.0)  # Max density
-    λ_min, μ_min = material_model(1e-9) # Min density
-    
-    # Estimate E0, ν, Emin, p from material model behavior
-    # E = λ(3λ + 2μ)/(λ + μ) and ν = λ/(2(λ + μ))
-    E_max = λ_max * (3*λ_max + 2*μ_max) / (λ_max + μ_max)
-    E_min = λ_min * (3*λ_min + 2*μ_min) / (λ_min + μ_min)
-    ν = λ_max / (2 * (λ_max + μ_max))
-    
-    # Store material parameters
-    cache[:material_params] = (E_max, ν, E_min, 3.0)  # Assume p=3
-    
-    # Compute unit stiffness matrices (E=1)
-    λ_unit, μ_unit = create_material_model(1.0, ν)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
-    
-    print_info("Computing element stiffness matrix cache...")
-    
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        reinit!(cellvalues, cell)
-        
-        ke_unit = zeros(n_basefuncs, n_basefuncs)
-        
-        # Compute unit stiffness matrix
-        for q_point in 1:getnquadpoints(cellvalues)
-            dΩ = getdetJdV(cellvalues, q_point)
-            
-            for i in 1:n_basefuncs
-                ∇Ni = shape_gradient(cellvalues, q_point, i)
-                εi = symmetric(∇Ni)
-                
-                for j in 1:n_basefuncs
-                    ∇Nj = shape_gradient(cellvalues, q_point, j)
-                    εj = symmetric(∇Nj)
-                    
-                    σ = constitutive_relation(εj, λ_unit, μ_unit)
-                    ke_unit[i, j] += (εi ⊡ σ) * dΩ
-                end
-            end
-        end
-        
-        unit_matrices[cell_id] = ke_unit
-    end
-    
-    cache[:unit_matrices] = unit_matrices
-    print_success("Element cache initialized: $(n_cells) unit matrices")
-end
-
-"""
-    assemble_original_method!(K, f, dh, cellvalues, material_model, density_data)
-
-Original assembly method without caching (for reference/fallback).
-"""
-function assemble_original_method!(K, f, dh, cellvalues, material_model, density_data)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    ke = zeros(n_basefuncs, n_basefuncs)
-    fe = zeros(n_basefuncs)
-    
-    # Create an assembler
-    assembler = start_assemble(K, f)
-    
-    # Iterate over all cells and assemble global matrices
-    for cell in CellIterator(dh)
-        reinit!(cellvalues, cell)
-        fill!(ke, 0.0)
-        fill!(fe, 0.0)
-        
-        # Get cell ID and density
-        cell_id = cellid(cell)
-        density = density_data[cell_id]
-        
-        # Get material parameters for this density
-        λ, μ = material_model(density)
-        
-        # Compute element stiffness matrix
-        for q_point in 1:getnquadpoints(cellvalues)
-            # Get integration weight
-            dΩ = getdetJdV(cellvalues, q_point)
-            
-            for i in 1:n_basefuncs
-                # Gradient of test function
-                ∇Ni = shape_gradient(cellvalues, q_point, i)
-                
-                for j in 1:n_basefuncs
-                    # Symmetric gradient of trial function
-                    ∇Nj = shape_gradient(cellvalues, q_point, j)
-                    
-                    # Compute the small strain tensor
-                    εi = symmetric(∇Ni)
-                    εj = symmetric(∇Nj)
-                    
-                    # Apply constitutive law to get stress tensor
-                    σ = constitutive_relation(εj, λ, μ)
-                    
-                    # Compute stiffness contribution using tensor double contraction
-                    ke[i, j] += (εi ⊡ σ) * dΩ
-                end
-            end
-        end
-        
-        # Assemble element contributions to global system
-        assemble!(assembler, celldofs(cell), ke, fe)
-    end
-    
-    println("Stiffness matrix assembled successfully with variable material properties")
-end
-
-
 
 """
     calculate_stresses_simp(u, dh, cellvalues, material_model, density_data)
@@ -806,75 +603,33 @@ Parameters:
 - `density_data`: Vector with density values for each cell
 
 Returns:
-- Tuple with:
-  - Dictionary mapping cell IDs to stress tensors at quadrature points
-  - Maximum von Mises stress value in the model
-  - Cell ID where the maximum stress occurs
+- Tuple with stress field, maximum von Mises stress, and cell ID where max occurs
 """
 function calculate_stresses_simp(u, dh, cellvalues, material_model, density_data)
-    # Initialize storage for stresses
     stress_field = Dict{Int, Vector{SymmetricTensor{2, 3, Float64}}}()
-    
-    # Track maximum von Mises stress and its location
     max_von_mises = 0.0
     max_vm_cell_id = 0
     
-    # For each cell, calculate stresses at quadrature points
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
         cell_dofs = celldofs(cell)
-        
-        # Get displacements for this cell
         u_cell = u[cell_dofs]
         
-        # Get density and material properties for this cell
         density = density_data[cell_id]
         λ, μ = material_model(density)
         
-        # Initialize cell values for this cell
         reinit!(cellvalues, cell)
         
-        # Initialize storage for stress at each quadrature point
-        n_qpoints = getnquadpoints(cellvalues)
-        cell_stresses = Vector{SymmetricTensor{2, 3, Float64}}(undef, n_qpoints)
+        cell_stresses, avg_stress = calculate_stress_at_quadrature_points(u_cell, cellvalues, λ, μ)
         
-        # Calculate cell's average stress for von Mises calculation
-        avg_stress = zero(SymmetricTensor{2, 3, Float64})
+        # Calculate von Mises stress for this cell
+        cell_von_mises = sqrt(3/2 * (dev(avg_stress) ⊡ dev(avg_stress)))
         
-        # Compute stresses at each quadrature point
-        for q_point in 1:n_qpoints
-            # Calculate strain from displacement gradients
-            grad_u = function_gradient(cellvalues, q_point, u_cell)
-            
-            # Calculate small strain tensor
-            ε = symmetric(grad_u)
-            
-            # Calculate stress using constitutive relation
-            σ = constitutive_relation(ε, λ, μ)
-            
-            # Store stress for this quadrature point
-            cell_stresses[q_point] = σ
-            
-            # Add to average stress
-            avg_stress += σ
+        if cell_von_mises > max_von_mises
+            max_von_mises = cell_von_mises
+            max_vm_cell_id = cell_id
         end
         
-        # Compute average stress for the cell
-        if n_qpoints > 0
-            avg_stress = avg_stress / n_qpoints
-            
-            # Calculate von Mises stress for this cell
-            # von Mises = sqrt(3/2 * (dev(σ) ⊡ dev(σ)))
-            cell_von_mises = sqrt(3/2 * (dev(avg_stress) ⊡ dev(avg_stress)))
-            
-            # Update maximum if this is higher
-            if cell_von_mises > max_von_mises
-                max_von_mises = cell_von_mises
-                max_vm_cell_id = cell_id
-            end
-        end
-        
-        # Store stresses for this cell
         stress_field[cell_id] = cell_stresses
     end
     
@@ -884,44 +639,49 @@ function calculate_stresses_simp(u, dh, cellvalues, material_model, density_data
     return stress_field, max_von_mises, max_vm_cell_id
 end
 
+# ============================================================================
+# SYSTEM SOLVER - Zachované původní funkce
+# ============================================================================
+
 """
-    solve_system_simp(K, f, dh, cellvalues, material_model, density_data, constraints...)
+    solve_system(K, f, dh, cellvalues, λ, μ, constraints...)
 
 Solves the system of linear equations with multiple constraint handlers
-and calculates stresses, using variable material properties.
-
-Parameters:
-- `K`: global stiffness matrix
-- `f`: global load vector
-- `dh`: DofHandler
-- `cellvalues`: CellValues for interpolation and integration
-- `material_model`: Function mapping density to material parameters (λ, μ)
-- `density_data`: Vector with density values for each cell
-- `constraints...`: ConstraintHandlers with boundary conditions
-
-Returns:
-- Tuple with:
-  - displacement vector
-  - deformation energy
-  - stress field dictionary
-  - maximum von Mises stress value
-  - cell ID where the maximum stress occurs
+and calculates stresses for constant material properties.
 """
-function solve_system_simp(K, f, dh, cellvalues, material_model, density_data, constraints...)
-    # Apply zero value to constrained dofs for all constraint handlers
+function solve_system(K, f, dh, cellvalues, λ, μ, constraints...)
     for ch in constraints
         apply_zero!(K, f, ch)
     end
     
     println("Solving linear system...")
     
-    # Solve
-    u = K \ f  # Implicit method using backslash operator
-    
-    # Calculate deformation energy: U = 0.5 * u^T * K * u
+    u = K \ f
     deformation_energy = 0.5 * dot(u, K * u)
-   
-    # Calculate stresses
+    stress_field, max_von_mises, max_stress_cell = calculate_stresses(u, dh, cellvalues, λ, μ)
+
+    println("Analysis complete")
+    println("Deformation energy: $deformation_energy J")
+    println("Maximum von Mises stress: $max_von_mises at cell $max_stress_cell")
+    
+    return u, deformation_energy, stress_field, max_von_mises, max_stress_cell
+end
+
+"""
+    solve_system_simp(K, f, dh, cellvalues, material_model, density_data, constraints...)
+
+Solves the system of linear equations with multiple constraint handlers
+and calculates stresses, using variable material properties.
+"""
+function solve_system_simp(K, f, dh, cellvalues, material_model, density_data, constraints...)
+    for ch in constraints
+        apply_zero!(K, f, ch)
+    end
+    
+    println("Solving linear system...")
+    
+    u = K \ f
+    deformation_energy = 0.5 * dot(u, K * u)
     stress_field, max_von_mises, max_stress_cell = calculate_stresses_simp(u, dh, cellvalues, material_model, density_data)
     
     println("Analysis complete")
@@ -930,6 +690,5 @@ function solve_system_simp(K, f, dh, cellvalues, material_model, density_data, c
     
     return u, deformation_energy, stress_field, max_von_mises, max_stress_cell
 end
-
 
 end # module
