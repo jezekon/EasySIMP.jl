@@ -11,6 +11,7 @@ using ..Utils
 export simp_optimize, OptimizationParameters, OptimizationResult
 
 # Include submodules
+include("ProgressTable.jl")
 include("OptimalityCriteria.jl")
 include("DensityFilter.jl") 
 include("SensitivityAnalysis.jl")
