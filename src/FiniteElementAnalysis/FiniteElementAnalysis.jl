@@ -6,7 +6,7 @@ using SparseArrays
 using StaticArrays
 using ..Utils
 
-export scale_mesh_to_meters!, create_material_model, setup_problem,
+export create_material_model, setup_problem,
        select_nodes_by_plane, select_nodes_by_circle, get_node_dofs,
        apply_fixed_boundary!, apply_sliding_boundary!, apply_force!, solve_system,
        calculate_stresses, create_simp_material_model, assemble_stiffness_matrix_simp!,
@@ -82,30 +82,6 @@ function create_simp_material_model(E0::Float64, nu::Float64, Emin::Float64=1e-6
     end
     
     return material_for_density
-end
-
-# ============================================================================
-# MESH SCALING
-# ============================================================================
-
-function scale_mesh_to_meters!(grid::Grid, scale_factor::Float64=1000.0)
-    print_info("Scaling mesh coordinates by factor 1/$(scale_factor)")
-    
-    coords_before = [norm(grid.nodes[1].x), norm(grid.nodes[end].x)]
-    
-    new_nodes = Vector{Ferrite.Node{3, Float64}}()
-    for node in grid.nodes
-        old_x = node.x
-        scaled_coords = collect(old_x) ./ scale_factor
-        new_coord = Vec{3}(scaled_coords)
-        push!(new_nodes, Ferrite.Node(new_coord))
-    end
-    
-    new_grid = Ferrite.Grid(getcells(grid), new_nodes)
-    coords_after = [norm(new_grid.nodes[1].x), norm(new_grid.nodes[end].x)]
-    print_data("Coordinate scale check: $(coords_before) -> $(coords_after)")
-    
-    return new_grid
 end
 
 # ============================================================================
