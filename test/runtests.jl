@@ -11,8 +11,8 @@ using EasySIMP.Utils
 
   RUN_BEAM_fixed = false
   RUN_BEAM_slide = false
-  RUN_BEAM_acc   = true
-  RUN_CHAPADLO   = false
+  RUN_BEAM_acc   = false
+  RUN_CHAPADLO   = true
 
   if RUN_BEAM_fixed
     @testset "Cantilever Beam SIMP (fixed)" begin
@@ -236,10 +236,9 @@ using EasySIMP.Utils
         # Apply point force (stejné jako předchozí)
         apply_force!(f, dh, collect(force_nodes), [0.0, -1000., 0.0])
         
-        # NOVÉ: Apply acceleration in Y direction
+        # Apply acceleration in Y direction
         acceleration_vector = [0.0, 6000., 0.0]  # 15 m/s² dolů (silnější než gravitace)
         acceleration_data = (acceleration_vector, ρ)
-        apply_acceleration!(f, dh, cellvalues, acceleration_vector, ρ)
         
         print_info("Applied Y-acceleration: $(acceleration_vector[2]) m/s² with density $(ρ) kg/m³")
         
@@ -283,15 +282,18 @@ using EasySIMP.Utils
           print_info("Running Chapadlo SIMP topology optimization")
           
           # Import mesh
-          grid = import_mesh("../data/stul15.vtu")
+          grid = import_mesh("../data/stul14.vtu")
           print_success("Chapadlo mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes")
                     
           # Material properties for Chapadlo
-          # E0 = 2.4e9  # Young's modulus 2400 MPa = 2.4e9 Pa
           E0 = 2.4e3      # MPa = N/mm²
           ν = 0.35    # Poisson's ratio
-          # ρ = 1040.0  # Density 1040 kg/m³
           ρ = 1.04e-6     # kg/mm³
+
+          # Optimization parameters:
+          volume_fraction = 0.3,     # 30% objemový poměr
+          filter_radius = 2.0,       # Větší filtr pro stabilitu
+
           λ, μ = create_material_model(E0, ν)
           material_model = create_simp_material_model(E0, ν, 1e-6, 3.0)
           
@@ -399,11 +401,11 @@ using EasySIMP.Utils
           
           # Apply forces
           # Nožičky: 2.5N dolů (předpokládám směr [0, 0, -1])
-          apply_force!(f, dh, collect(nozicky_nodes), [0.0, 0.0, -2500.])   # 2.5N = 2500 mN
+          apply_force!(f, dh, collect(nozicky_nodes), [0.0, 0.0, -2.5])   # 2.5N
           print_info("Applied 2.5N downward force to nožičky ($(length(nozicky_nodes)) nodes)")
           
           # Kamera: 1N dolů (předpokládám směr [0, 0, -1]) 
-          apply_force!(f, dh, collect(kamera_nodes), [0.0, 0.0, -1000.0])   # 1N = 1000 mN
+          apply_force!(f, dh, collect(kamera_nodes), [0.0, 0.0, -1.0])   # 1N
           print_info("Applied 1N downward force to kamera ($(length(kamera_nodes)) nodes)")
           
           # Acceleration data: 6 m/s² ve směru (0, 1, 0)
@@ -417,12 +419,12 @@ using EasySIMP.Utils
               Emin = 1e-6,
               ν = ν,
               p = 3.0,
-              volume_fraction = 0.4,     # 30% objemový poměr
-              max_iterations = 15,       # Více iterací pro komplexnější geometrii
+              volume_fraction = volume_fraction,    # 30% objemový poměr
+              max_iterations = 25,                  # Více iterací pro komplexnější geometrii
               tolerance = 0.005,
-              filter_radius = 2.0,       # Větší filtr pro stabilitu
-              move_limit = 0.2,          # Zadaný limitní krok
-              damping = 0.5              # Zadané tlumení
+              filter_radius = filter_radius,        # Větší filtr pro stabilitu
+              move_limit = 0.2,                     # Zadaný limitní krok
+              damping = 0.5                         # Zadané tlumení
           )
           
           print_info("Optimization parameters:")
@@ -433,8 +435,8 @@ using EasySIMP.Utils
           
           # Run optimization with multiple forces and both boundary conditions
           forces_list = [
-              (dh, collect(nozicky_nodes), [0.0, 0.0, -2500.]),
-              (dh, collect(kamera_nodes), [0.0, 0.0, -1000.])
+              (dh, collect(nozicky_nodes), [0.0, 0.0, -2.5]), # N
+              (dh, collect(kamera_nodes), [0.0, 0.0, -1.0]) # N
           ]
           
           results = simp_optimize(
@@ -453,7 +455,7 @@ using EasySIMP.Utils
           
           # Export results
           results_data = create_results_data(grid, dh, results)
-          export_results_vtu(results_data, "chapadlo_optimization_velke")
+          export_results_vtu(results_data, "chapadlo_TO_vfrac-$(volume_fraction)")
           
           print_success("Chapadlo test completed successfully!")
           print_info("Results exported to: chapadlo_optimization.vtu")
