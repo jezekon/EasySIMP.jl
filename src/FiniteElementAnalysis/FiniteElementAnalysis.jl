@@ -6,15 +6,14 @@ using SparseArrays
 using StaticArrays
 using ..Utils
 
-export scale_mesh_to_meters!, create_material_model, setup_problem,
-       select_nodes_by_plane, select_nodes_by_circle, get_node_dofs,
+export create_material_model, setup_problem,
+       get_node_dofs, apply_variable_density_volume_force!,
        apply_fixed_boundary!, apply_sliding_boundary!, apply_force!, solve_system,
        calculate_stresses, create_simp_material_model, assemble_stiffness_matrix_simp!,
        calculate_stresses_simp, solve_system_simp
 
-include("VolumeForce.jl")
-export apply_volume_force!, apply_gravity!, apply_acceleration!, apply_variable_density_volume_force!
-
+include("SelectNodesForBC.jl")
+export select_nodes_by_plane, select_nodes_by_circle
 # ============================================================================
 # UNIFIED MATERIAL CALCULATIONS - Odstranění duplicit
 # ============================================================================
@@ -82,30 +81,6 @@ function create_simp_material_model(E0::Float64, nu::Float64, Emin::Float64=1e-6
     end
     
     return material_for_density
-end
-
-# ============================================================================
-# MESH SCALING
-# ============================================================================
-
-function scale_mesh_to_meters!(grid::Grid, scale_factor::Float64=1000.0)
-    print_info("Scaling mesh coordinates by factor 1/$(scale_factor)")
-    
-    coords_before = [norm(grid.nodes[1].x), norm(grid.nodes[end].x)]
-    
-    new_nodes = Vector{Ferrite.Node{3, Float64}}()
-    for node in grid.nodes
-        old_x = node.x
-        scaled_coords = collect(old_x) ./ scale_factor
-        new_coord = Vec{3}(scaled_coords)
-        push!(new_nodes, Ferrite.Node(new_coord))
-    end
-    
-    new_grid = Ferrite.Grid(getcells(grid), new_nodes)
-    coords_after = [norm(new_grid.nodes[1].x), norm(new_grid.nodes[end].x)]
-    print_data("Coordinate scale check: $(coords_before) -> $(coords_after)")
-    
-    return new_grid
 end
 
 # ============================================================================
@@ -196,9 +171,6 @@ Parameters:
 - `cache`: Optional Dict for caching unit element matrices (default: nothing)
 """
 function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    fe = zeros(n_basefuncs)
-    
     if cache !== nothing && haskey(cache, :unit_matrices)
         assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
     else
@@ -247,7 +219,6 @@ function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data,
     fe = zeros(n_basefuncs)
     
     unit_matrices = cache[:unit_matrices]
-    E0, ν, Emin, p = cache[:material_params]
     
     fill!(K.nzval, 0.0)
     assembler = start_assemble(K, f)
@@ -256,11 +227,15 @@ function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data,
         cell_id = cellid(cell)
         density = density_data[cell_id]
         
-        # Calculate SIMP Young's modulus
-        E_current = Emin + (E0 - Emin) * density^p
+        # Získej skalární faktor z material_model
+        λ_current, μ_current = material_model(density)
+        λ_unit, μ_unit = material_model(1.0)
         
-        # Scale cached unit matrix by current Young's modulus
-        ke = E_current * unit_matrices[cell_id]
+        # Scaling factor je poměr current/unit
+        scaling_factor = λ_current / λ_unit  # λ i μ mají stejný scaling
+        
+        # Škáluj cached unit matrix
+        ke = scaling_factor * unit_matrices[cell_id]
         
         assemble!(assembler, celldofs(cell), ke, fe)
     end
@@ -275,33 +250,10 @@ Initialize element stiffness matrix cache with unit matrices.
 FIXED: Uses actual parameters from material_model instead of hardcoded p=3.
 """
 function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
-    # Extract material parameters by testing material model
-    λ_max, μ_max = material_model(1.0)   # Max density
-    λ_min, μ_min = material_model(1e-9)  # Min density
+    # PŘÍMO EXTRAHUJ PARAMETRY Z OptimizationParameters místo odhadu
+    # (parametry se předají z optimization)
+    # Toto se upraví v ZMĚNĚ 3
     
-    # Calculate E0, Emin, ν from Lamé parameters
-    # E = μ(3λ + 2μ)/(λ + μ) and ν = λ/(2(λ + μ))
-    E_max = μ_max * (3*λ_max + 2*μ_max) / (λ_max + μ_max)
-    E_min = μ_min * (3*λ_min + 2*μ_min) / (λ_min + μ_min)
-    ν = λ_max / (2 * (λ_max + μ_max))
-    
-    # Estimate p by testing intermediate density
-    λ_mid, μ_mid = material_model(0.5)
-    E_mid = μ_mid * (3*λ_mid + 2*μ_mid) / (λ_mid + μ_mid)
-    
-    # Solve: E_mid = E_min + (E_max - E_min) * 0.5^p for p
-    if E_mid > E_min && E_max > E_min
-        ratio = (E_mid - E_min) / (E_max - E_min)
-        p_estimated = log(ratio) / log(0.5)
-    else
-        p_estimated = 3.0  # Fallback
-    end
-    
-    # Store material parameters - NO MORE HARDCODED p=3!
-    cache[:material_params] = (E_max, ν, E_min, p_estimated)
-    
-    # Compute unit stiffness matrices (E=1)
-    λ_unit, μ_unit = compute_lame_parameters(1.0, ν)
     n_basefuncs = getnbasefunctions(cellvalues)
     unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
     
@@ -310,7 +262,10 @@ function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
         reinit!(cellvalues, cell)
-        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
+        
+        # Použij jednotkové materiálové parametry (budou se později skalovat)
+        λ1, μ1 = material_model(1.0)  # Pro hustotu = 1
+        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ1, μ1)
         unit_matrices[cell_id] = ke_unit
     end
     
@@ -350,105 +305,6 @@ function get_node_dofs(dh::DofHandler)
     end
     
     return node_to_dofs
-end
-
-"""
-    select_nodes_by_plane(grid::Grid, 
-                          point::Vector{Float64}, 
-                          normal::Vector{Float64}, 
-                          tolerance::Float64=1e-6)
-
-Selects nodes that lie on a plane defined by a point and normal vector.
-
-Parameters:
-- `grid`: Computational mesh
-- `point`: A point on the plane [x, y, z]
-- `normal`: Normal vector to the plane [nx, ny, nz]
-- `tolerance`: Distance tolerance for node selection
-
-Returns:
-- Set of node IDs that lie on the plane
-"""
-function select_nodes_by_plane(grid::Grid, 
-                               point::Vector{Float64}, 
-                               normal::Vector{Float64}, 
-                               tolerance::Float64=1e-4)
-    # Normalize the normal vector
-    unit_normal = normal / norm(normal)
-    
-    # Extract number of nodes
-    num_nodes = getnnodes(grid)
-    selected_nodes = Set{Int}()
-    
-    # Check each node
-    for node_id in 1:num_nodes
-        coord = grid.nodes[node_id].x
-        
-        # Calculate distance from point to plane: d = (p - p0) · n
-        dist = abs(dot(coord - point, unit_normal))
-        
-        # If distance is within tolerance, node is on plane
-        if dist < tolerance
-            push!(selected_nodes, node_id)
-        end
-    end
-    
-    # println("Selected $(length(selected_nodes)) nodes on the specified plane")
-    return selected_nodes
-end
-
-"""
-    select_nodes_by_circle(grid::Grid, 
-                           center::Vector{Float64}, 
-                           normal::Vector{Float64}, 
-                           radius::Float64, 
-                           tolerance::Float64=1e-6)
-
-Selects nodes that lie on a circular region defined by center, normal and radius.
-
-Parameters:
-- `grid`: Computational mesh
-- `center`: Center of the circle [x, y, z]
-- `normal`: Normal vector to the plane containing the circle [nx, ny, nz]
-- `radius`: Radius of the circle
-- `tolerance`: Distance tolerance for node selection
-
-Returns:
-- Set of node IDs that lie on the circular region
-"""
-function select_nodes_by_circle(grid::Grid, 
-                                center::Vector{Float64}, 
-                                normal::Vector{Float64}, 
-                                radius::Float64, 
-                                tolerance::Float64=1e-6)
-    # First, get nodes on the plane
-    nodes_on_plane = select_nodes_by_plane(grid, center, normal, tolerance)
-    
-    # Normalize the normal vector
-    unit_normal = normal / norm(normal)
-    
-    # Initialize set for nodes in circle
-    nodes_in_circle = Set{Int}()
-    
-    # Check which nodes are within the circle radius
-    for node_id in nodes_on_plane
-        coord = grid.nodes[node_id].x
-        
-        # Project the vector from center to node onto the plane
-        v = coord - center
-        projection = v - dot(v, unit_normal) * unit_normal
-        
-        # Calculate distance from center in the plane
-        dist = norm(projection)
-        
-        # If distance is less than radius, node is in the circle
-        if dist <= radius + tolerance
-            push!(nodes_in_circle, node_id)
-        end
-    end
-    
-    println("Selected $(length(nodes_in_circle)) nodes in the circular region")
-    return nodes_in_circle
 end
 
 """
@@ -558,6 +414,83 @@ function apply_force!(f, dh, nodes, force_vector)
     end
     
     println("Applied force $force_vector distributed over $(length(nodes)) nodes")
+end
+
+"""
+    apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vector, density_data)
+
+Applies volume forces with variable density distribution (for SIMP topology optimization).
+
+Parameters:
+- `f`: global load vector (modified in-place)
+- `dh`: DofHandler
+- `cellvalues`: CellValues for interpolation and integration
+- `body_force_vector`: Body force per unit mass [Fx, Fy, Fz] in N/kg
+- `density_data`: Vector with density values for each cell
+
+Returns:
+- nothing (modifies f in-place)
+"""
+function apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vector, density_data)
+    # Number of basis functions per element
+    n_basefuncs = getnbasefunctions(cellvalues)
+    
+    # Element load vector for body forces
+    fe_body = zeros(n_basefuncs)
+    
+    # Track total applied force
+    total_force_applied = zeros(3)
+    
+    # Iterate over all cells
+    for cell in CellIterator(dh)
+        # Get cell ID and corresponding density
+        cell_id = cellid(cell)
+        density = density_data[cell_id]
+        
+        # Skip if density is negligible (for SIMP optimization)
+        if density < 1e-6
+            continue
+        end
+        
+        # Reinitialize cell values
+        reinit!(cellvalues, cell)
+        fill!(fe_body, 0.0)
+        
+        # Get cell DOFs
+        cell_dofs = celldofs(cell)
+        
+        # Integrate body force over element volume
+        for q_point in 1:getnquadpoints(cellvalues)
+            dΩ = getdetJdV(cellvalues, q_point)
+            
+            for i in 1:n_basefuncs
+                # Get vector shape function value
+                N_vec = shape_value(cellvalues, q_point, i)
+                
+                # Calculate DOF component
+                dofs_per_node = 3
+                dof_component = mod(i - 1, dofs_per_node) + 1
+                
+                # Extract scalar component
+                N_scalar = N_vec[dof_component]
+                
+                # Apply variable density body force
+                body_force_contribution = density * body_force_vector[dof_component] * N_scalar * dΩ
+                fe_body[i] += body_force_contribution
+                
+                # Track total force
+                total_force_applied[dof_component] += body_force_contribution
+            end
+        end
+        
+        # Add to global load vector
+        for (local_dof, global_dof) in enumerate(cell_dofs)
+            f[global_dof] += fe_body[local_dof]
+        end
+    end
+    
+    println("Applied variable density volume force")
+    println("Total force applied: $total_force_applied N")
 end
 
 # ============================================================================
