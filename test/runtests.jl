@@ -287,12 +287,12 @@ using EasySIMP.Utils
                     
           # Material properties for Chapadlo
           E0 = 2.4e3      # MPa = N/mm²
-          ν = 0.35    # Poisson's ratio
+          ν = 0.35        # Poisson's ratio
           ρ = 1.04e-6     # kg/mm³
 
           # Optimization parameters:
-          volume_fraction = 0.3,     # 30% objemový poměr
-          filter_radius = 2.0,       # Větší filtr pro stabilitu
+          volume_fraction = 0.3     # 30% objemový poměr
+          filter_radius = 2.0       # Větší filtr pro stabilitu
 
           λ, μ = create_material_model(E0, ν)
           material_model = create_simp_material_model(E0, ν, 1e-6, 3.0)
@@ -401,11 +401,13 @@ using EasySIMP.Utils
           
           # Apply forces
           # Nožičky: 2.5N dolů (předpokládám směr [0, 0, -1])
-          apply_force!(f, dh, collect(nozicky_nodes), [0.0, 0.0, -2.5])   # 2.5N
+          # F_legs = pi*(14*14-7.5*7.5)*3*0.00985 = 13. N
+          apply_force!(f, dh, collect(nozicky_nodes), [0.0, 0.0, -13000.]) # mN
           print_info("Applied 2.5N downward force to nožičky ($(length(nozicky_nodes)) nodes)")
           
-          # Kamera: 1N dolů (předpokládám směr [0, 0, -1]) 
-          apply_force!(f, dh, collect(kamera_nodes), [0.0, 0.0, -1.0])   # 1N
+          # Kamera: 1N dolů (předpokládám směr [0, 0, -1])
+          # F_camera = pi*(21.5*21.5-17*17)* 0.001852 * 0.5 = 0.5 N
+          apply_force!(f, dh, collect(kamera_nodes), [0.0, 0.0, -500.]) # mN
           print_info("Applied 1N downward force to kamera ($(length(kamera_nodes)) nodes)")
           
           # Acceleration data: 6 m/s² ve směru (0, 1, 0)
@@ -420,7 +422,7 @@ using EasySIMP.Utils
               ν = ν,
               p = 3.0,
               volume_fraction = volume_fraction,    # 30% objemový poměr
-              max_iterations = 25,                  # Více iterací pro komplexnější geometrii
+              max_iterations = 20,                  # Více iterací pro komplexnější geometrii
               tolerance = 0.005,
               filter_radius = filter_radius,        # Větší filtr pro stabilitu
               move_limit = 0.2,                     # Zadaný limitní krok
@@ -435,8 +437,8 @@ using EasySIMP.Utils
           
           # Run optimization with multiple forces and both boundary conditions
           forces_list = [
-              (dh, collect(nozicky_nodes), [0.0, 0.0, -2.5]), # N
-              (dh, collect(kamera_nodes), [0.0, 0.0, -1.0]) # N
+              (dh, collect(nozicky_nodes), [0.0, 0.0, -13000.]), # mN
+              (dh, collect(kamera_nodes), [0.0, 0.0, -500.]) # mN
           ]
           
           results = simp_optimize(
