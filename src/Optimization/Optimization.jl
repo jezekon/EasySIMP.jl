@@ -226,6 +226,7 @@ function simp_optimize(
         
         # Check convergence
         change = maximum(abs.(densities - old_densities))
+        print_data("Maximum density change: $(change)")
         
         if change < params.tolerance
             print_success("Converged after $iteration iterations")
