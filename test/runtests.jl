@@ -11,7 +11,7 @@ using EasySIMP.Utils
     RUN_BEAM_fixed = true
     RUN_BEAM_slide = false
     RUN_BEAM_acc = false
-    RUN_CHAPADLO = false
+    RUN_GRIPPER = false
 
     if RUN_BEAM_fixed
         @testset "Cantilever Beam SIMP (fixed)" begin
@@ -328,17 +328,17 @@ using EasySIMP.Utils
         end
     end
 
-    if RUN_CHAPADLO
-        @testset "Chapadlo SIMP Optimization" begin
-            print_info("Running Chapadlo SIMP topology optimization")
+    if RUN_GRIPPER
+        @testset "Gripper SIMP Optimization" begin
+            print_info("Running Gripper SIMP topology optimization")
 
             # Import mesh
             grid = import_mesh("../data/stul14.vtu")
             print_success(
-                "Chapadlo mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
+                "Gripper mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
             )
 
-            # Material properties for Chapadlo
+            # Material properties for Gripper
             E0 = 2.4e3      # MPa = N/mm²
             ν = 0.35        # Poisson's ratio
             ρ = 1.04e-6     # kg/mm³
@@ -381,10 +381,8 @@ using EasySIMP.Utils
                 dh,
                 all_constraint_nodes,
                 all_force_nodes,
-                "chapadlo_boundary_conditions_all",
+                "gripper_boundary_conditions_all",
             )
-
-            # exit()  # Uncomment to only export boundary conditions without running optimization
 
             # Handle empty node sets by finding closest nodes
             if isempty(fixed_nodes)
@@ -523,7 +521,7 @@ using EasySIMP.Utils
                 acceleration_data,
             )
 
-            print_success("Chapadlo optimization completed!")
+            print_success("Gripper optimization completed!")
             print_data("Final compliance: $(results.compliance)")
             print_data("Final volume fraction: $(results.volume / calculate_volume(grid))")
             print_data("Iterations: $(results.iterations)")
@@ -531,10 +529,10 @@ using EasySIMP.Utils
 
             # Export results
             results_data = create_results_data(grid, dh, results)
-            export_results_vtu(results_data, "chapadlo_TO_vfrac-$(0.3)")
+            export_results_vtu(results_data, "gripper_TO_vfrac-$(0.3)")
 
-            print_success("Chapadlo test completed successfully!")
-            print_info("Results exported to: chapadlo_optimization.vtu")
+            print_success("Gripper test completed successfully!")
+            print_info("Results exported to: gripper_optimization.vtu")
         end
     end
 end
