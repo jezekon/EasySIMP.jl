@@ -8,10 +8,10 @@ using EasySIMP.PostProcessing
 using EasySIMP.Utils
 
 @testset "EasySIMP.jl Tests" begin
-    RUN_BEAM_fixed = true
+    RUN_BEAM_fixed = false
     RUN_BEAM_slide = false
     RUN_BEAM_acc = false
-    RUN_GRIPPER = false
+    RUN_GRIPPER = true
 
     if RUN_BEAM_fixed
         @testset "Cantilever Beam SIMP (fixed)" begin
@@ -493,7 +493,7 @@ using EasySIMP.Utils
                 p = 3.0,
                 volume_fraction = 0.3,
                 max_iterations = 3000,
-                tolerance = 0.010,
+                tolerance = 0.10,
                 filter_radius = 1.5,
                 move_limit = 0.2,
                 damping = 0.5,

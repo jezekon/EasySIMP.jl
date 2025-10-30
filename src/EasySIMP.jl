@@ -1,3 +1,5 @@
+# src/EasySIMP.jl
+
 module EasySIMP
 
 const VERSION = v"0.1.0"
@@ -18,22 +20,31 @@ using .MeshImport
 include("FiniteElementAnalysis/FiniteElementAnalysis.jl")
 using .FiniteElementAnalysis
 
-include("Optimization/Optimization.jl")
-using .Optimization
-
 include("PostProcessing/PostProcessing.jl")
 using .PostProcessing
 
+include("Optimization/Optimization.jl")
+using .Optimization
+
+
 # Export core functionality
 export import_mesh
+
 export setup_problem,
     create_material_model,
+    create_simp_material_model,
+    assemble_stiffness_matrix_simp!,
     apply_fixed_boundary!,
     apply_sliding_boundary!,
     apply_force!,
-    solve_system
+    solve_system,
+    select_nodes_by_plane,
+    select_nodes_by_circle
+
 export OptimizationParameters, simp_optimize
-export export_results_vtu, create_results_data
+
+export export_results_vtu, create_results_data, export_boundary_conditions
+
 export calculate_volume, print_info, print_success, print_warning, print_error, print_data
 
 end # module EasySIMP
