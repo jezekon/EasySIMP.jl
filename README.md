@@ -3,7 +3,7 @@
 EasySIMP is a Julia package for topology optimization using the Solid Isotropic Material with Penalization (SIMP) method. It provides an intuitive interface for designing optimal structures under various loading conditions with support for complex boundary conditions, body forces, and imported meshes. For practical usage examples, see [`test/examples/`](test/examples/).
 
 <p align="center">
-  <img src="doc/gripper_optimization.png" width="80%" alt="Gripper topology optimization result" />
+  <img src="doc/04_gripper_complex-transparent.png" width="60%" alt="Gripper topology optimization result" />
 </p>
 
 ## Features
