@@ -49,26 +49,33 @@ function calculate_sensitivities(
     E0::Float64,
     Emin::Float64,
     ν::Float64,
-    p::Float64
+    p::Float64,
 )
     n_cells = getncells(grid)
     sensitivities = zeros(n_cells)
-    
+
     # Iterate over all cells
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
         density = densities[cell_id]
-        
+
         # Get element displacement vector
         cell_dofs = celldofs(cell)
         u_element = u[cell_dofs]
-        
+
         # Calculate compliance sensitivity for this element
         sensitivities[cell_id] = calculate_compliance_sensitivity(
-            cell, cellvalues, density, u_element, E0, Emin, ν, p
+            cell,
+            cellvalues,
+            density,
+            u_element,
+            E0,
+            Emin,
+            ν,
+            p,
         )
     end
-    
+
     return sensitivities
 end
 
@@ -98,45 +105,45 @@ function calculate_compliance_sensitivity(
     E0::Float64,
     Emin::Float64,
     ν::Float64,
-    p::Float64
+    p::Float64,
 )
     # Reinitialize cell values
     reinit!(cellvalues, cell)
-    
+
     # Calculate Lamé parameters for unit Young's modulus
     λ0, μ0 = compute_lame_parameters(1.0, ν)
-    
+
     # Calculate element stiffness matrix for unit Young's modulus
     n_basefuncs = getnbasefunctions(cellvalues)
     ke_unit = zeros(n_basefuncs, n_basefuncs)
-    
-    for q_point in 1:getnquadpoints(cellvalues)
+
+    for q_point = 1:getnquadpoints(cellvalues)
         dΩ = getdetJdV(cellvalues, q_point)
-        
-        for i in 1:n_basefuncs
+
+        for i = 1:n_basefuncs
             ∇Ni = shape_gradient(cellvalues, q_point, i)
             εi = symmetric(∇Ni)
-            
-            for j in 1:n_basefuncs
+
+            for j = 1:n_basefuncs
                 ∇Nj = shape_gradient(cellvalues, q_point, j)
                 εj = symmetric(∇Nj)
-                
+
                 # Use unit material properties
                 σ = λ0 * tr(εj) * one(εj) + 2μ0 * εj
                 ke_unit[i, j] += (εi ⊡ σ) * dΩ
             end
         end
     end
-    
+
     # Calculate sensitivity using adjoint method
     # For SIMP: E(ρ) = Emin + ρ^p * (E0 - Emin)
     # ∂E/∂ρ = p * ρ^(p-1) * (E0 - Emin)
-    
+
     # Derivative of Young's modulus w.r.t. density
     dE_drho = p * density^(p-1) * (E0 - Emin)
-    
+
     # Compliance sensitivity: ∂c/∂ρ = -∂E/∂ρ * u^T * k_unit * u
     sensitivity = -dE_drho * dot(u_element, ke_unit * u_element)
-    
+
     return sensitivity
 end
