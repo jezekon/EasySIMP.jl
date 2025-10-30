@@ -18,10 +18,18 @@ using EasySIMP.Utils
             print_info("Running Cantilever Beam SIMP (fixed")
 
             # Import mesh
-            grid = import_mesh("../data/cantilever_beam.vtu")
-            print_success(
-                "Mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
+            # grid = import_mesh("../data/cantilever_beam.vtu")
+            # print_success(
+            #     "Mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
+            # )
+
+            grid = generate_grid(
+                Hexahedron,
+                (60, 20, 4),
+                Vec((0.0, 0.0, 0.0)),
+                Vec((60.0, 20.0, 4.0)),
             )
+            print_success("Generated mesh: $(getncells(grid)) elements")
 
             # Material properties
             E0 = 200.0
