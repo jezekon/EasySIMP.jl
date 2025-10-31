@@ -32,7 +32,7 @@ git clone https://github.com/jezekon/EasySIMP.jl
 Run SIMP topology optimization:
 
 ```julia
-simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data=nothing)
+simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data)
 ```
 
 #### Parameters:
@@ -53,7 +53,7 @@ simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceler
 Configure the optimization process with the following options:
 
 ```julia
-OptimizationParameters(;
+params = OptimizationParameters(;
     E0 = 1.0,                              # Young's modulus of solid material
     Emin = 1e-9,                           # Young's modulus of void (numerical stability)
     ν = 0.3,                               # Poisson's ratio
