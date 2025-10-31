@@ -7,10 +7,27 @@
 #   directions but are constrained in others. This is useful for symmetry
 #   conditions or when partial constraints are needed.
 #
+# Problem Visualization (side view):
+#
+#        Y ↑ ○ F = 1.0 N (downward)
+#          | ○↓
+#      20  | ○████████████████████████████████████████████████
+#          | ○█                                              █
+#          | ○█         DESIGN DOMAIN                        █
+#          | ○█         60 × 20 × 4 mm                       █
+#          | ○█                                              █
+#       0  | ○████████████████████████████████████████████████
+#          | ○                                               ━━ Y-support (U2=0)
+#          | ○ ← Sliding support (U1=0, free in Y,Z)
+#          └─────────────────────────────────────────────────────→ X
+#            0                                               60
+#
+#        (Z dimension: 0 to 4 mm, perpendicular to page)
+#
 # Boundary Conditions:
-#   - Sliding constraint: Left face (x=0) - fixed only in X direction
-#   - Point support: Right end (x=60, y=0, z=2) - fixed only in Y direction  
-#   - Point load: Top left corner (x=0, y=20, z=2) - downward in Y direction
+#   - Sliding support: Left face (x=0) - U1=0 only (can slide in Y,Z)
+#   - Point support: Right end (x=60, y=0, z=2) - U2=0 only (can move in X,Z)
+#   - Point load: Top left (x=0, y=20, z=2) - F = [0, -1, 0] N
 #
 # Optimization Goal:
 #   - Minimize compliance with sliding support configuration
