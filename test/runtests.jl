@@ -8,20 +8,28 @@ using EasySIMP.PostProcessing
 using EasySIMP.Utils
 
 @testset "EasySIMP.jl Tests" begin
-    RUN_BEAM_fixed = true
+    RUN_BEAM_fixed = false
     RUN_BEAM_slide = false
     RUN_BEAM_acc = false
-    RUN_CHAPADLO = false
+    RUN_GRIPPER = true
 
     if RUN_BEAM_fixed
         @testset "Cantilever Beam SIMP (fixed)" begin
             print_info("Running Cantilever Beam SIMP (fixed")
 
             # Import mesh
-            grid = import_mesh("../data/cantilever_beam.vtu")
-            print_success(
-                "Mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
+            # grid = import_mesh("../data/cantilever_beam.vtu")
+            # print_success(
+            #     "Mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
+            # )
+
+            grid = generate_grid(
+                Hexahedron,
+                (60, 20, 4),
+                Vec((0.0, 0.0, 0.0)),
+                Vec((60.0, 20.0, 4.0)),
             )
+            print_success("Generated mesh: $(getncells(grid)) elements")
 
             # Material properties
             E0 = 200.0
@@ -74,10 +82,10 @@ using EasySIMP.Utils
                 ν = ν,
                 p = 3.0,
                 volume_fraction = 0.4,
-                max_iterations = 2000,        # ← Zvýšit pro lepší konvergenci
-                tolerance = 0.080,          # ← Menší tolerance
+                max_iterations = 2000,
+                tolerance = 0.080,
                 filter_radius = 2.5,
-                move_limit = 0.2,          # ← Menší move limit pro stabilitu
+                move_limit = 0.2,
                 damping = 0.5,
             )
 
@@ -238,10 +246,9 @@ using EasySIMP.Utils
                 "Mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
             )
 
-            # Material properties - SNÍŽENÁ HUSTOTA pro lepší projev zrychlení
+            # Material properties
             E0 = 2.4e3
             ν = 0.35
-            # ρ = 1040.0  # Sníženo z 7850 na 1000 kg/m³ (plast/kompozit)
             ρ = 1.04e-6     # kg/mm³
             λ, μ = create_material_model(E0, ν)
             material_model = create_simp_material_model(E0, ν, 1e-6, 3.0)
@@ -250,16 +257,13 @@ using EasySIMP.Utils
             dh, cellvalues, K, f = setup_problem(grid)
             print_success("FEM setup complete: $(ndofs(dh)) DOFs")
 
-            # Boundary conditions (stejné jako sliding test)
+            # Boundary conditions
             sliding_nodes =
                 select_nodes_by_plane(grid, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-3)
             support_nodes =
                 select_nodes_by_circle(grid, [60.0, 0.0, 2.0], [0.0, 1.0, 0.0], 0.5)
             force_nodes =
                 select_nodes_by_circle(grid, [0.0, 20.0, 2.0], [1.0, 0.0, 0.0], 1.0)
-
-            # Handle empty node sets (stejné jako předchozí test)
-            # ... find closest nodes if empty ...
 
             # Assemble initial stiffness
             assemble_stiffness_matrix_simp!(
@@ -272,14 +276,14 @@ using EasySIMP.Utils
             )
 
             # Apply boundary conditions
-            ch_sliding = apply_sliding_boundary!(K, f, dh, sliding_nodes, [1])  # Fix X
-            ch_support = apply_sliding_boundary!(K, f, dh, support_nodes, [2])   # Fix Y
+            ch_sliding = apply_sliding_boundary!(K, f, dh, sliding_nodes, [1])
+            ch_support = apply_sliding_boundary!(K, f, dh, support_nodes, [2])
 
-            # Apply point force (stejné jako předchozí)
+            # Apply point force
             apply_force!(f, dh, collect(force_nodes), [0.0, -1000.0, 0.0])
 
             # Apply acceleration in Y direction
-            acceleration_vector = [0.0, 6000.0, 0.0]  # 15 m/s² dolů (silnější než gravitace)
+            acceleration_vector = [0.0, 6000.0, 0.0]
             acceleration_data = (acceleration_vector, ρ)
 
             print_info(
@@ -324,25 +328,20 @@ using EasySIMP.Utils
         end
     end
 
-    if RUN_CHAPADLO
-        @testset "Chapadlo SIMP Optimization" begin
-            print_info("Running Chapadlo SIMP topology optimization")
+    if RUN_GRIPPER
+        @testset "Gripper SIMP Optimization" begin
+            print_info("Running Gripper SIMP topology optimization")
 
             # Import mesh
             grid = import_mesh("../data/stul14.vtu")
             print_success(
-                "Chapadlo mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
+                "Gripper mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
             )
 
-            # Material properties for Chapadlo
+            # Material properties for Gripper
             E0 = 2.4e3      # MPa = N/mm²
             ν = 0.35        # Poisson's ratio
             ρ = 1.04e-6     # kg/mm³
-
-            # Optimization parameters:
-            # volume_fraction = 0.3     # 30% objemový poměr
-            # filter_radius = 2.0       # Větší filtr pro stabilitu
-
             λ, μ = create_material_model(E0, ν)
             material_model = create_simp_material_model(E0, ν, 1e-6, 3.0)
 
@@ -351,8 +350,7 @@ using EasySIMP.Utils
             # Setup FEM
             dh, cellvalues, K, f = setup_problem(grid)
 
-            # Boundary conditions - Vetknutí (Fixed support)
-            # Omezená rovina XZ, y = 75, kruh r = 16.11, střed = [0, 75, 115]
+            # Boundary conditions - Fixed support at circular region
             fixed_nodes = select_nodes_by_circle(
                 grid,
                 [0.0, 75.0, 115.0],
@@ -361,23 +359,21 @@ using EasySIMP.Utils
                 1e-3,
             )
 
-            # Symetrie - celá rovina YZ, x = 0, nulový posuv ve směru x
+            # Symmetry plane YZ at x = 0 (fix X displacement only)
             symmetry_nodes =
                 select_nodes_by_plane(grid, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-3)
 
             # Load points
-            # 1. Nožičky: rovina XY, z = -90, síla 2.5N
+            # 1. Legs: plane XY at z = -90
             nozicky_nodes =
                 select_nodes_by_plane(grid, [0.0, 0.0, -90.0], [0.0, 0.0, 1.0], 1.0)
 
-            # 2. Kamera: omezená rovina XY, z = 5, kruh r = 21.5, střed = [0, 0, 5], síla 1N
+            # 2. Camera: circular region on plane XY at z = 5, radius = 21.5
             kamera_nodes =
                 select_nodes_by_circle(grid, [0.0, 0.0, 5.0], [0.0, 0.0, 1.0], 21.5, 1e-3)
 
             # Export boundary conditions for visualization
             print_info("Exporting boundary conditions for ParaView inspection...")
-
-            # Export all boundary conditions (fixed, symmetry vs all forces)
             all_force_nodes = union(nozicky_nodes, kamera_nodes)
             all_constraint_nodes = union(fixed_nodes, symmetry_nodes)
             export_boundary_conditions(
@@ -385,10 +381,8 @@ using EasySIMP.Utils
                 dh,
                 all_constraint_nodes,
                 all_force_nodes,
-                "chapadlo_boundary_conditions_all",
+                "gripper_boundary_conditions_all",
             )
-
-            # exit()  # Uncomment to only export boundary conditions without running optimization
 
             # Handle empty node sets by finding closest nodes
             if isempty(fixed_nodes)
@@ -410,7 +404,6 @@ using EasySIMP.Utils
 
             if isempty(symmetry_nodes)
                 print_warning("No symmetry nodes found on YZ plane")
-                # Find nodes closest to x=0 plane
                 symmetry_nodes = Set{Int}()
                 for node_id = 1:getnnodes(grid)
                     node_coord = grid.nodes[node_id].x
@@ -424,7 +417,7 @@ using EasySIMP.Utils
             end
 
             if isempty(nozicky_nodes)
-                print_warning("No nožičky nodes found, finding nodes near z = -90")
+                print_warning("No leg nodes found, finding nodes near z = -90")
                 nozicky_nodes = Set{Int}()
                 for node_id = 1:getnnodes(grid)
                     node_coord = grid.nodes[node_id].x
@@ -432,11 +425,11 @@ using EasySIMP.Utils
                         push!(nozicky_nodes, node_id)
                     end
                 end
-                print_info("Found $(length(nozicky_nodes)) nodes near z = -90 for nožičky")
+                print_info("Found $(length(nozicky_nodes)) nodes near z = -90 for legs")
             end
 
             if isempty(kamera_nodes)
-                print_warning("No kamera nodes found, finding nodes near [0, 0, 5]")
+                print_warning("No camera nodes found, finding nodes near [0, 0, 5]")
                 target_point = [0.0, 0.0, 5.0]
                 min_dist = Inf
                 closest_node = 1
@@ -449,7 +442,7 @@ using EasySIMP.Utils
                     end
                 end
                 kamera_nodes = Set([closest_node])
-                print_info("Using closest node $(closest_node) for kamera")
+                print_info("Using closest node $(closest_node) for camera")
             end
 
             # Apply boundary conditions
@@ -462,10 +455,10 @@ using EasySIMP.Utils
                 fill(0.3, getncells(grid)),
             )
 
-            # Fixed boundary condition (vetknutí) - all DOFs fixed
+            # Fixed support (all DOFs constrained)
             ch_fixed = apply_fixed_boundary!(K, f, dh, fixed_nodes)
 
-            # Symmetry boundary condition - fix only X direction (DOF 1)
+            # Symmetry constraint (X direction only)
             ch_symmetry = apply_sliding_boundary!(K, f, dh, symmetry_nodes, [1])
 
             print_info("Applied boundary conditions:")
@@ -473,39 +466,37 @@ using EasySIMP.Utils
             print_data("  Symmetry: $(length(symmetry_nodes)) nodes (X direction only)")
 
             # Apply forces
-            # Nožičky: 2.5N dolů (předpokládám směr [0, 0, -1])
-            # F_legs = pi*(14*14-7.5*7.5)*3*0.00985 = 13. N
+            # Legs: F = π*(14²-7.5²)*3*0.00985 ≈ 13 N downward
             apply_force!(f, dh, collect(nozicky_nodes), [0.0, 0.0, -13000.0]) # mN
             print_info(
-                "Applied 2.5N downward force to nožičky ($(length(nozicky_nodes)) nodes)",
+                "Applied 13N downward force to legs ($(length(nozicky_nodes)) nodes)",
             )
 
-            # Kamera: 1N dolů (předpokládám směr [0, 0, -1])
-            # F_camera = pi*(21.5*21.5-17*17)* 0.001852 * 0.5 = 0.5 N
+            # Camera: F = π*(21.5²-17²)*0.001852*0.5 ≈ 0.5 N downward
             apply_force!(f, dh, collect(kamera_nodes), [0.0, 0.0, -500.0]) # mN
             print_info(
-                "Applied 1N downward force to kamera ($(length(kamera_nodes)) nodes)",
+                "Applied 0.5N downward force to camera ($(length(kamera_nodes)) nodes)",
             )
 
-            # Acceleration data: 6 m/s² ve směru (0, 1, 0)
+            # Acceleration: 6 m/s² in Y direction
             acceleration_vector = [0.0, 6000.0, 0.0]  # 6 m/s² = 6000 mm/s²
             acceleration_data = (acceleration_vector, ρ)
             print_info(
-                "Vertical acceleration: $(acceleration_vector[2]) m/s² with density $(ρ) kg/m³",
+                "Vertical acceleration: $(acceleration_vector[2]) mm/s² with density $(ρ) kg/mm³",
             )
 
-            # Optimization parameters for Chapadlo
+            # Optimization parameters
             opt_params = OptimizationParameters(
                 E0 = E0,
                 Emin = 1e-6,
                 ν = ν,
                 p = 3.0,
-                volume_fraction = 0.3,    # 30% objemový poměr
-                max_iterations = 3000,                  # Více iterací pro komplexnější geometrii
-                tolerance = 0.010,
-                filter_radius = 1.5,        # Větší filtr pro stabilitu
-                move_limit = 0.2,                     # Zadaný limitní krok
-                damping = 0.5,                         # Zadané tlumení
+                volume_fraction = 0.3,
+                max_iterations = 3000,
+                tolerance = 0.10,
+                filter_radius = 1.5,
+                move_limit = 0.2,
+                damping = 0.5,
             )
 
             print_info("Optimization parameters:")
@@ -514,7 +505,7 @@ using EasySIMP.Utils
             print_data("  Damping: $(opt_params.damping)")
             print_data("  Filter radius: $(opt_params.filter_radius)")
 
-            # Run optimization with multiple forces and both boundary conditions
+            # Run optimization with multiple forces
             forces_list = [
                 (dh, collect(nozicky_nodes), [0.0, 0.0, -13000.0]), # mN
                 (dh, collect(kamera_nodes), [0.0, 0.0, -500.0]), # mN
@@ -525,12 +516,12 @@ using EasySIMP.Utils
                 dh,
                 cellvalues,
                 forces_list,
-                [ch_fixed, ch_symmetry],  # Both boundary conditions
+                [ch_fixed, ch_symmetry],
                 opt_params,
                 acceleration_data,
             )
 
-            print_success("Chapadlo optimization completed!")
+            print_success("Gripper optimization completed!")
             print_data("Final compliance: $(results.compliance)")
             print_data("Final volume fraction: $(results.volume / calculate_volume(grid))")
             print_data("Iterations: $(results.iterations)")
@@ -538,10 +529,10 @@ using EasySIMP.Utils
 
             # Export results
             results_data = create_results_data(grid, dh, results)
-            export_results_vtu(results_data, "chapadlo_TO_vfrac-$(0.3)")
+            export_results_vtu(results_data, "gripper_TO_vfrac-$(0.3)")
 
-            print_success("Chapadlo test completed successfully!")
-            print_info("Results exported to: chapadlo_optimization.vtu")
+            print_success("Gripper test completed successfully!")
+            print_info("Results exported to: gripper_optimization.vtu")
         end
     end
 end

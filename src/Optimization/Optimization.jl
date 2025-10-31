@@ -6,6 +6,7 @@ using LinearAlgebra
 using Printf
 using ..FiniteElementAnalysis
 using ..Utils
+using ..PostProcessing
 
 # Export main functions
 export simp_optimize, OptimizationParameters, OptimizationResult
@@ -21,27 +22,34 @@ include("SensitivityAnalysis.jl")
 
 Parameters for SIMP topology optimization.
 """
+# src/Optimization/Optimization.jl
+# Add to OptimizationParameters struct:
+
 mutable struct OptimizationParameters
     # Material properties
-    E0::Float64                    # Young's modulus of solid material
-    Emin::Float64                  # Young's modulus of void material
-    ν::Float64                     # Poisson's ratio
-    p::Float64                     # Penalization power (default: 3.0)
+    E0::Float64
+    Emin::Float64
+    ν::Float64
+    p::Float64
 
     # Optimization settings
-    volume_fraction::Float64       # Target volume fraction
-    max_iterations::Int           # Maximum iterations (default: 200)
-    tolerance::Float64            # Convergence tolerance (default: 0.01)
+    volume_fraction::Float64
+    max_iterations::Int
+    tolerance::Float64
 
     # Filter settings
-    filter_radius::Float64        # Density filter radius
+    filter_radius::Float64
 
     # OC parameters
-    move_limit::Float64           # Move limit for OC (default: 0.2)
-    damping::Float64              # Damping coefficient (default: 0.5)
+    move_limit::Float64
+    damping::Float64
 
     # Performance
-    use_cache::Bool               # Enable element matrix caching (default: true)
+    use_cache::Bool
+
+    # Intermediate export settings
+    export_interval::Int          # Export every N iterations (0 = no export)
+    export_path::String          # Path for intermediate results
 
     # Default constructor
     function OptimizationParameters(;
@@ -56,6 +64,8 @@ mutable struct OptimizationParameters
         move_limit = 0.2,
         damping = 0.5,
         use_cache = true,
+        export_interval = 0,
+        export_path = "",
     )
         new(
             E0,
@@ -69,6 +79,8 @@ mutable struct OptimizationParameters
             move_limit,
             damping,
             use_cache,
+            export_interval,
+            export_path,
         )
     end
 end
@@ -267,6 +279,69 @@ function simp_optimize(
         iter_time = time() - iter_start_time
         print_data("Iteration time: $(round(iter_time, digits=2)) seconds")
         print_data("Maximum density change: $(change)")
+
+        # Export intermediate results if requested
+        if params.export_interval > 0 && iteration % params.export_interval == 0
+            if !isempty(params.export_path)
+                mkpath(params.export_path)
+
+                # Create intermediate result
+                K_temp = allocate_matrix(dh)
+                f_temp = zeros(ndofs(dh))
+                assemble_stiffness_matrix_simp!(
+                    K_temp,
+                    f_temp,
+                    dh,
+                    cellvalues,
+                    material_model,
+                    densities,
+                    cache,
+                )
+
+                if acceleration_data !== nothing
+                    acceleration_vector, base_density = acceleration_data
+                    variable_densities = densities .* base_density
+                    apply_variable_density_volume_force!(
+                        f_temp,
+                        dh,
+                        cellvalues,
+                        acceleration_vector,
+                        variable_densities,
+                    )
+                end
+
+                apply_forces_and_bcs!(K_temp, f_temp, forces, boundary_conditions)
+                u_temp = K_temp \ f_temp
+
+                stress_field_temp, _, _ = calculate_stresses_simp(
+                    u_temp,
+                    dh,
+                    cellvalues,
+                    material_model,
+                    densities,
+                )
+
+                intermediate_result = OptimizationResult(
+                    copy(densities),
+                    u_temp,
+                    stress_field_temp,
+                    compliance,
+                    current_volume,
+                    iteration,
+                    false,  # Not converged yet
+                    copy(compliance_history),
+                    copy(volume_history),
+                )
+
+                results_data = create_results_data(grid, dh, intermediate_result)
+                export_results_vtu(
+                    results_data,
+                    joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
+                    include_history = false,
+                )
+                print_info("Exported intermediate results: iteration $iteration")
+            end
+        end
 
         if change < params.tolerance
             print_success("Converged after $iteration iterations")

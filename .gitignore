@@ -1,4 +1,5 @@
 *.inp
 *.vtu
+*.sh
 
 !data/*.vtu
