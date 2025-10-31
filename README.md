@@ -88,19 +88,19 @@ using EasySIMP
 using Ferrite
 
 # 1. Generate or import mesh
-grid = generate_grid(Hexahedron, (60, 20, 4), 
-                     Vec((0.0, 0.0, 0.0)), 
-                     Vec((60.0, 20.0, 4.0)))
+grid = generate_grid(Hexahedron, (60, 20, 4),  # nelements: (nx, ny, nz)
+                     Vec((0.0, 0.0, 0.0)),     # lower corner
+                     Vec((60.0, 20.0, 4.0)))   # upper corner
 
 # 2. Setup FEM problem
 dh, cellvalues, K, f = setup_problem(grid)
 
 # 3. Define boundary conditions
-fixed_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-3)
-force_nodes = select_nodes_by_circle(grid, [60.0, 0.0, 2.0], [1.0, 0.0, 0.0], 1.0)
+fixed_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-3) # point, normal, tol
+force_nodes = select_nodes_by_circle(grid, [60.0, 0.0, 2.0], [1.0, 0.0, 0.0], 1.0) # center, normal, radius
 
 # 4. Apply boundary conditions
-material_model = create_simp_material_model(200.0, 0.3, 1e-6, 3.0)
+material_model = create_simp_material_model(200.0, 0.3, 1e-6, 3.0) # E0, ν, Emin, p
 assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, 
                                 fill(0.4, getncells(grid)))
 ch_fixed = apply_fixed_boundary!(K, f, dh, fixed_nodes)
@@ -118,8 +118,8 @@ opt_params = OptimizationParameters(
 # 6. Run optimization
 results = simp_optimize(
     grid, dh, cellvalues,
-    [(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
-    [ch_fixed],
+    [(dh, collect(force_nodes), [0.0, -1.0, 0.0])], # forces: [(dh, nodes, vector)]
+    [ch_fixed],                                     # boundary conditions
     opt_params
 )
 
@@ -159,7 +159,3 @@ julia --project=. test/Examples/04_gripper_complex.jl
 For intermediate results animation:
 1. Load all `iter_*.vtu` files as a time series
 2. Animate to see optimization convergence
-
-___
-## Acknowledgments
-This package implements the classic SIMP method for topology optimization. The implementation is inspired by the educational paper "A 99 line topology optimization code written in Matlab" by Sigmund (2001) and its extensions.
