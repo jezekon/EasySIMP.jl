@@ -4,14 +4,14 @@ using WriteVTK
 """
     extract_mesh_from_vtu(input_file::String, output_file::String)
 
-Načte VTU soubor, extrahuje z něj pouze síť a uloží ji jako čistý VTU soubor.
+Reads a VTU file, extracts only the mesh, and saves it as a clean VTU file.
 
 Parameters:
-- `input_file`: Cesta k vstupnímu VTU souboru
-- `output_file`: Název výstupního souboru (bez přípony .vtu)
+- `input_file`: Path to the input VTU file
+- `output_file`: Output file name (without .vtu extension)
 
 Returns:
-- `Bool`: true pokud úspěšné, jinak false
+- `Bool`: true if successful, false otherwise
 """
 function extract_mesh_from_vtu(input_file::String, output_file::String)
     try

@@ -238,29 +238,21 @@ Assembly using cached unit matrices for improved performance.
 function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
     n_basefuncs = getnbasefunctions(cellvalues)
     fe = zeros(n_basefuncs)
-
     unit_matrices = cache[:unit_matrices]
-
     fill!(K.nzval, 0.0)
     assembler = start_assemble(K, f)
-
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
         density = density_data[cell_id]
-
-        # Získej skalární faktor z material_model
+        # Get scaling factor from material_model
         λ_current, μ_current = material_model(density)
         λ_unit, μ_unit = material_model(1.0)
-
-        # Scaling factor je poměr current/unit
-        scaling_factor = λ_current / λ_unit  # λ i μ mají stejný scaling
-
-        # Škáluj cached unit matrix
+        # Scaling factor is the ratio current/unit (λ and μ have the same scaling)
+        scaling_factor = λ_current / λ_unit
+        # Scale cached unit matrix
         ke = scaling_factor * unit_matrices[cell_id]
-
         assemble!(assembler, celldofs(cell), ke, fe)
     end
-
     println(
         "Stiffness matrix assembled with cached unit matrices: $(length(density_data)) elements",
     )
@@ -273,25 +265,17 @@ Initialize element stiffness matrix cache with unit matrices.
 FIXED: Uses actual parameters from material_model instead of hardcoded p=3.
 """
 function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
-    # PŘÍMO EXTRAHUJ PARAMETRY Z OptimizationParameters místo odhadu
-    # (parametry se předají z optimization)
-    # Toto se upraví v ZMĚNĚ 3
-
     n_basefuncs = getnbasefunctions(cellvalues)
     unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
-
     print_info("Computing element stiffness matrix cache...")
-
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
         reinit!(cellvalues, cell)
-
-        # Použij jednotkové materiálové parametry (budou se později skalovat)
-        λ1, μ1 = material_model(1.0)  # Pro hustotu = 1
+        # Use unit material parameters (density = 1) for later scaling
+        λ1, μ1 = material_model(1.0)
         ke_unit = assemble_element_stiffness_matrix(cellvalues, λ1, μ1)
         unit_matrices[cell_id] = ke_unit
     end
-
     cache[:unit_matrices] = unit_matrices
     print_success("Element cache initialized: $(n_cells) unit matrices")
 end
