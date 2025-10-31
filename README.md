@@ -1,6 +1,6 @@
 # EasySIMP.jl
 
-EasySIMP is a Julia package for topology optimization using the Solid Isotropic Material with Penalization (SIMP) method. It provides an intuitive interface for designing optimal structures under various loading conditions with support for complex boundary conditions, body forces, and imported meshes. For practical usage examples, see [`test/examples/`](test/examples/).
+EasySIMP is a Julia package for topology optimization using the Solid Isotropic Material with Penalization (SIMP) method, based on [Sigmund (2001)](https://doi.org/10.1007/s001580050176). It provides an intuitive interface suitable for educational purposes and practical applications. For usage examples, see [`test/Examples/`](test/Examples/).
 
 <p align="center">
   <img src="doc/04_gripper_complex-transparent.png" width="60%" alt="Gripper topology optimization result" />
@@ -8,13 +8,11 @@ EasySIMP is a Julia package for topology optimization using the Solid Isotropic 
 
 ## Features
 
-- **Versatile Mesh Support**: Works with both hexahedral and tetrahedral elements, including VTU mesh import
 - **SIMP Optimization**: Classic topology optimization with penalization parameter control and density filtering
-- **Advanced Boundary Conditions**: Fixed supports, sliding (symmetry) planes, and distributed forces
-- **Body Forces**: Variable density acceleration for dynamic loading scenarios
-- **Sensitivity Analysis**: Efficient computation with optional caching for large-scale problems
+- **Mesh Support**: Linear hexahedral and tetrahedral elements; supports VTU import and simple hexahedral mesh generation
+- **Boundary Conditions**: Fixed supports, sliding planes, distributed forces, and body forces
 - **Progress Monitoring**: Real-time optimization progress with compliance and volume tracking
-- **ParaView Export**: VTU output with density field, displacement, stress, and quality metrics
+- **ParaView Export**: VTU output with density field, displacement, and stress
 
 ## Installation
 
@@ -77,7 +75,7 @@ OptimizationParameters(;
 - **E0**: Young's modulus of the solid material (typically 1.0 for normalized, or actual values like 200 GPa for steel)
 - **Emin**: Minimum stiffness to avoid singularity (recommended: 1e-6 to 1e-9)
 - **ν**: Poisson's ratio of the material
-- **p**: SIMP penalization parameter (typically 3.0, higher values yield sharper 0/1 designs)
+- **p**: SIMP penalization parameter (typically 3.0)
 - **volume_fraction**: Target volume constraint as fraction of total volume
 - **filter_radius**: Controls smoothing of density field (1.5-2.5 × average element size recommended)
 - **export_interval**: When > 0, exports intermediate results every N iterations for animation
@@ -132,97 +130,31 @@ export_results_vtu(results_data, "cantilever_beam")
 
 ### Advanced Usage Examples
 
-For complete examples with detailed documentation, see [`test/examples/`](test/examples/):
+For complete examples with detailed documentation, see [`test/Examples/`](test/Examples/):
 
 #### Basic Examples
 ```julia
 # Simple cantilever beam with fixed support
-julia --project=. test/examples/01_basic_cantilever.jl
+julia --project=. test/Examples/01_basic_cantilever.jl
 
 # Beam with sliding (symmetry) boundary condition
-julia --project=. test/examples/02_sliding_support.jl
+julia --project=. test/Examples/02_sliding_support.jl
 
 # Beam under acceleration (body forces)
-julia --project=. test/examples/03_with_acceleration.jl
+julia --project=. test/Examples/03_with_acceleration.jl
 ```
 
 #### Complex Example
 ```julia
 # Multi-objective gripper with imported mesh
 # Features: multiple loads, symmetry, body forces
-julia --project=. test/examples/04_gripper_complex.jl
-```
-
-### Working with Imported Meshes
-
-EasySIMP supports importing tetrahedral and hexahedral meshes from VTU files:
-
-```julia
-using EasySIMP
-
-# Import mesh from VTU file
-grid = import_mesh("path/to/your_mesh.vtu")
-
-# Continue with standard workflow
-dh, cellvalues, K, f = setup_problem(grid)
-# ... rest of optimization setup
-```
-
-### Node Selection Utilities
-
-The package provides convenient functions for selecting nodes based on geometric criteria:
-
-```julia
-# Select nodes on a plane
-fixed_nodes = select_nodes_by_plane(
-    grid, 
-    [0.0, 0.0, 0.0],    # Point on plane
-    [1.0, 0.0, 0.0],    # Normal vector
-    1e-3                # Tolerance
-)
-
-# Select nodes within a circular region
-force_nodes = select_nodes_by_circle(
-    grid,
-    [60.0, 0.0, 2.0],   # Center point
-    [1.0, 0.0, 0.0],    # Normal vector
-    5.0                 # Radius
-)
-```
-
-### Boundary Condition Types
-
-**Fixed Boundary**: Constrains all degrees of freedom
-```julia
-ch_fixed = apply_fixed_boundary!(K, f, dh, node_set)
-```
-
-**Sliding Boundary**: Constrains specific DOFs (useful for symmetry planes)
-```julia
-# Fix only X direction (DOF 1) for YZ symmetry plane
-ch_symmetry = apply_sliding_boundary!(K, f, dh, node_set, [1])
-```
-
-**Distributed Forces**: Apply forces to multiple nodes
-```julia
-apply_force!(f, dh, node_indices, [0.0, -1.0, 0.0])  # Downward force
-```
-
-**Body Forces**: Apply acceleration-based volume forces
-```julia
-acceleration_vector = [0.0, 9810.0, 0.0]  # Gravity in mm/s²
-base_density = 7850.0e-9  # Material density in kg/mm³
-acceleration_data = (acceleration_vector, base_density)
-
-# Pass to optimization
-results = simp_optimize(grid, dh, cellvalues, forces, bcs, params, acceleration_data)
+julia --project=. test/Examples/04_gripper_complex.jl
 ```
 
 ### Visualization in ParaView
 1. Load the output VTU file in ParaView
-2. Apply **Threshold** filter: `density > 0.3` to show solid regions
-3. Color by `von_mises_stress` or `displacement_magnitude`
-4. Use **Warp By Vector** on displacement field to visualize deformation
+2. Apply **Clip with implicit function**
+3. Clip Type: `density` to show solid regions (adjust Value and select Invert if needed)
 
 For intermediate results animation:
 1. Load all `iter_*.vtu` files as a time series
