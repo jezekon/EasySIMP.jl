@@ -159,3 +159,7 @@ julia --project=. test/Examples/04_gripper_complex.jl
 For intermediate results animation:
 1. Load all `iter_*.vtu` files as a time series
 2. Animate to see optimization convergence
+
+___
+## Acknowledgments
+This package implements the classic SIMP method for topology optimization. The implementation is inspired by the educational paper ["A 99 line topology optimization code written in Matlab"](https://link.springer.com/article/10.1007/s001580050176) by Sigmund (2001). Built on [Ferrite.jl](https://github.com/Ferrite-FEM/Ferrite.jl) for finite element analysis.
