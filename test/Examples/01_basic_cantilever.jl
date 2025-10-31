@@ -6,13 +6,32 @@
 #   Classic cantilever beam problem with fixed support on one end and 
 #   point load on the free end. Demonstrates basic SIMP optimization setup.
 #
+#
+# Problem Visualization (side view):
+#
+#        Y ↑ ▓
+#          | ▓
+#      20  | ▓████████████████████████████████████████████████
+#          | ▓█                                              █
+#          | ▓█         DESIGN DOMAIN                        █
+#          | ▓█         60 × 20 × 4 mm                       █
+#          | ▓█                                              █
+#       0  | ▓████████████████████████████████████████████████
+#          | ▓                                               ↓ F = 1.0 N (downward)
+#          | ▓ ← Fixed support (all DOFs = 0)
+#          └─────────────────────────────────────────────────────→ X
+#            0                                               60
+#
+#        (Z dimension: 0 to 4 mm, perpendicular to page)
+#
 # Boundary Conditions:
-#   - Fixed support: Left face (x=0) - all DOFs constrained
-#   - Point load: Right end (x=60, y=0, z=2) - downward force in Y direction
+#   - Fixed support: Left face (x=0) - all DOFs constrained (U1=U2=U3=0)
+#   - Point load: Right end (x=60, y=0, z=2) - F = [0, -1, 0] N
 #
 # Optimization Goal:
 #   - Minimize compliance (maximize stiffness)
 #   - Target volume fraction: 40%
+#   - Material will be removed from low-stress regions
 #
 # =============================================================================
 
@@ -26,9 +45,9 @@ using LinearAlgebra
 println("Generating mesh...")
 grid = generate_grid(
     Hexahedron,
-    (60, 20, 4),                    # Elements in X, Y, Z
+    (60, 20, 4),                   # Elements in X, Y, Z
     Vec((0.0, 0.0, 0.0)),          # Lower corner
-    Vec((60.0, 20.0, 4.0)),         # Upper corner
+    Vec((60.0, 20.0, 4.0)),        # Upper corner
 )
 println("  ✓ Generated: $(getncells(grid)) elements, $(getnnodes(grid)) nodes")
 
