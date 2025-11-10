@@ -16,13 +16,13 @@ EasySIMP is a Julia package for topology optimization using the Solid Isotropic 
 
 ## Installation
 
+**Requirements:** Julia LTS (1.10.10)
 ```julia
 # From Julia REPL, press ] to enter package mode
 pkg> add https://github.com/jezekon/EasySIMP.jl
 ```
 
 or
-
 ```bash
 git clone https://github.com/jezekon/EasySIMP.jl
 ```
