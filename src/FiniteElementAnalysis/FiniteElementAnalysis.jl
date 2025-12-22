@@ -583,7 +583,7 @@ function calculate_stresses_simp(u, dh, cellvalues, material_model, density_data
         stress_field[cell_id] = cell_stresses
     end
 
-    println("Stress calculation complete with variable material properties")
+    # println("Stress calculation complete with variable material properties")
     println("Maximum von Mises stress: $max_von_mises at cell $max_vm_cell_id")
 
     return stress_field, max_von_mises, max_vm_cell_id

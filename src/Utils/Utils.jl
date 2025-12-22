@@ -31,7 +31,7 @@ function calculate_volume(
     # Create a default density array of 1.0 if no density data provided
     num_cells = getncells(grid)
     actual_density_data = if density_data === nothing
-        println("No density data provided, assuming uniform density of 1.0")
+        # println("No density data provided, assuming uniform density of 1.0")
         ones(Float64, num_cells)
     else
         # Check if provided density data length matches the number of cells
