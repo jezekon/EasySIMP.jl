@@ -111,7 +111,7 @@ println("  ✓ Force nodes (circular): $(length(force_nodes))")
 # -----------------------------------------------------------------------------
 # 6. EXPORT BOUNDARY CONDITIONS FOR VISUALIZATION
 # -----------------------------------------------------------------------------
-results_dir = "./results/05_3D_2x1x1_4Legs"
+results_dir = "./results/05_3D_2x1x1_4Legs_4tol_r2.0"
 mkpath(results_dir)
 
 export_boundary_conditions(
@@ -153,9 +153,9 @@ opt_params = OptimizationParameters(
     ν = ν,
     p = 3.0,
     volume_fraction = 0.4,
-    max_iterations = 500,
-    tolerance = 0.05,
-    filter_radius = 1.5,
+    max_iterations = 2000,
+    tolerance = 0.04,
+    filter_radius = 2.0,
     move_limit = 0.2,
     damping = 0.5,
     use_cache = true,

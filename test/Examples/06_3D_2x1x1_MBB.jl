@@ -97,7 +97,7 @@ apply_force!(f, dh, collect(force_nodes), [0.0, -1.0, 0.0])
 # -----------------------------------------------------------------------------
 # 5. OPTIMIZATION PARAMETERS
 # -----------------------------------------------------------------------------
-results_dir = "./results/06_3D_2x1x1_MBB"
+results_dir = "./results/06_3D_2x1x1_MBB_4tol_r1.5"
 mkpath(results_dir)
 
 opt_params = OptimizationParameters(
@@ -106,13 +106,13 @@ opt_params = OptimizationParameters(
     ν = ν,
     p = 3.0,
     volume_fraction = 0.4,
-    max_iterations = 100,
-    tolerance = 0.01,
-    filter_radius = 2.0,
+    max_iterations = 2000,
+    tolerance = 0.04,
+    filter_radius = 1.5,
     move_limit = 0.2,
     damping = 0.5,
     use_cache = true,
-    export_interval = 5,
+    export_interval = 10,
     export_path = results_dir,
     task_name = "3D_MBB_Beam_2x1x1",  # Task name for logging
 )
