@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [deps]
 AbaqusReader = "bc6b9049-e460-56d6-94b4-a597b2c0390d"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Ferrite = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"

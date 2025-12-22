@@ -4,6 +4,7 @@ using Ferrite
 using SparseArrays
 using LinearAlgebra
 using Printf
+using Dates
 using ..FiniteElementAnalysis
 using ..Utils
 using ..PostProcessing
@@ -16,15 +17,13 @@ include("ProgressTable.jl")
 include("OptimalityCriteria.jl")
 include("DensityFilter.jl")
 include("SensitivityAnalysis.jl")
+include("OptimizationLogger.jl")
 
 """
     OptimizationParameters
 
 Parameters for SIMP topology optimization.
 """
-# src/Optimization/Optimization.jl
-# Add to OptimizationParameters struct:
-
 mutable struct OptimizationParameters
     # Material properties
     E0::Float64
@@ -48,10 +47,12 @@ mutable struct OptimizationParameters
     use_cache::Bool
 
     # Intermediate export settings
-    export_interval::Int          # Export every N iterations (0 = no export)
-    export_path::String          # Path for intermediate results
+    export_interval::Int
+    export_path::String
 
-    # Default constructor
+    # Task name for logging
+    task_name::String
+
     function OptimizationParameters(;
         E0 = 1.0,
         Emin = 1e-9,
@@ -66,6 +67,7 @@ mutable struct OptimizationParameters
         use_cache = true,
         export_interval = 0,
         export_path = "",
+        task_name = "SIMP_Optimization",
     )
         new(
             E0,
@@ -81,45 +83,32 @@ mutable struct OptimizationParameters
             use_cache,
             export_interval,
             export_path,
+            task_name,
         )
     end
 end
 
 """
-    simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data=nothing)
+    OptimizationResult
 
 Results from SIMP topology optimization.
 """
 struct OptimizationResult
-    densities::Vector{Float64}      # Final density distribution
-    displacements::Vector{Float64}   # Final displacement field
-    stresses::Dict                  # Stress field
-    compliance::Float64             # Final compliance
-    volume::Float64                 # Final volume
-    iterations::Int                 # Number of iterations
-    converged::Bool                 # Convergence flag
-    compliance_history::Vector{Float64}  # Compliance history
-    volume_history::Vector{Float64}      # Volume history
+    densities::Vector{Float64}
+    displacements::Vector{Float64}
+    stresses::Dict
+    compliance::Float64
+    volume::Float64
+    iterations::Int
+    converged::Bool
+    compliance_history::Vector{Float64}
+    volume_history::Vector{Float64}
 end
 
 """
-    simp_optimize(grid, dh, cellvalues, material_params, forces, boundary_conditions, params, acceleration_data=nothing)
+    simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data=nothing)
 
 Main SIMP topology optimization function.
-
-# Arguments
-
-  - `grid`: Ferrite Grid object
-  - `dh`: DofHandler
-  - `cellvalues`: CellValues for integration
-  - `forces`: Applied forces
-  - `boundary_conditions`: Boundary conditions
-  - `params`: OptimizationParameters
-  - `acceleration_data`: Optional tuple (acceleration_vector, base_density) for variable density acceleration
-
-# Returns
-
-  - `OptimizationResult`: Complete optimization results
 """
 function simp_optimize(
     grid::Grid,
@@ -132,11 +121,15 @@ function simp_optimize(
 )
     print_info("Starting SIMP topology optimization")
 
+    # Initialize logger
+    logger = nothing
+    if !isempty(params.export_path)
+        logger = OptimizationLogger(params.export_path, params.task_name)
+    end
+
     if acceleration_data !== nothing
         acceleration_vector, base_density = acceleration_data
-        print_info(
-            "Variable density acceleration enabled: $(acceleration_vector) with base density $(base_density) kg/m³",
-        )
+        print_info("Variable density acceleration enabled: $(acceleration_vector)")
     end
 
     # Initialize
@@ -145,21 +138,14 @@ function simp_optimize(
 
     # Create cache if enabled
     cache = params.use_cache ? Dict{Symbol,Any}() : nothing
-    if cache !== nothing
-        print_info("Performance caching enabled")
-    end
 
-    # Create special cellvalues for volume calculation with higher order quadrature
+    # Create volume quadrature
     volume_cellvalues = create_volume_quadrature(grid)
-
-    # Calculate element volumes with higher order quadrature
     element_volumes = calculate_element_volumes(grid, volume_cellvalues)
     total_volume = sum(element_volumes)
+    total_mesh_volume = calculate_volume(grid)
 
     print_data("Total mesh volume: $total_volume")
-    print_data(
-        "Element volume range: [$(minimum(element_volumes)), $(maximum(element_volumes))]",
-    )
 
     # Create material model
     material_model = create_simp_material_model(params.E0, params.ν, params.Emin, params.p)
@@ -173,16 +159,11 @@ function simp_optimize(
     iteration = 0
 
     for iteration = 1:params.max_iterations
-        iter_start_time = time()
-        print_info("Iteration $iteration")
-
-        # Store old densities for convergence check
         old_densities = copy(densities)
 
-        # Assemble system matrices (with optional caching)
+        # Assemble system
         K = allocate_matrix(dh)
         f = zeros(ndofs(dh))
-
         assemble_stiffness_matrix_simp!(
             K,
             f,
@@ -193,7 +174,7 @@ function simp_optimize(
             cache,
         )
 
-        # Apply variable density acceleration if provided
+        # Apply acceleration if provided
         if acceleration_data !== nothing
             acceleration_vector, base_density = acceleration_data
             variable_densities = densities .* base_density
@@ -206,30 +187,21 @@ function simp_optimize(
             )
         end
 
-        # Apply forces and boundary conditions
+        # Apply forces and BCs
         apply_forces_and_bcs!(K, f, forces, boundary_conditions)
 
-        # Debug: Check if forces are non-zero
-        force_magnitude = norm(f)
-        println("Total force vector magnitude: $(force_magnitude)")
-
-        # Solve FE system
+        # Solve
         u = K \ f
 
-        # Calculate compliance
+        # Calculate compliance and volume
         compliance = 0.5 * dot(u, K * u)
         current_volume = calculate_volume(grid, densities)
+        current_volume_fraction = current_volume / total_mesh_volume
 
-        # Store history
         push!(compliance_history, compliance)
         push!(volume_history, current_volume)
 
-        print_data("Compliance: $compliance")
-
         # Sensitivity analysis
-        # sensitivities = calculate_sensitivities(
-        #     grid, dh, cellvalues, material_model, densities, u
-        # )
         sensitivities = calculate_sensitivities(
             grid,
             dh,
@@ -242,11 +214,10 @@ function simp_optimize(
             params.p,
         )
 
-        # Density filtering with proper element size scaling
+        # Density filtering
         filtered_sensitivities =
             apply_density_filter(grid, densities, sensitivities, params.filter_radius)
 
-        # Validate filter parameters on first iteration
         if iteration == 1
             print_filter_info(grid, params.filter_radius, "auto")
         end
@@ -262,84 +233,43 @@ function simp_optimize(
             params.damping,
         )
 
-        # Volume constraint diagnostics
-        current_volume = calculate_volume(grid, densities)
-        current_volume_fraction = current_volume / calculate_volume(grid)
-
-        print_data("Volume fraction after OC: $(current_volume_fraction)")
-
-        # Check for extreme values
-        if current_volume_fraction < 0.01 || current_volume_fraction > 0.99
-            print_warning("Extreme volume fraction detected: $current_volume_fraction")
-            print_warning("This may indicate OC algorithm instability")
-        end
-
         # Check convergence
         change = maximum(abs.(densities - old_densities))
-        iter_time = time() - iter_start_time
-        print_data("Iteration time: $(round(iter_time, digits=2)) seconds")
-        print_data("Maximum density change: $(change)")
 
-        # Export intermediate results if requested
+        # Log iteration
+        if logger !== nothing
+            log_iteration!(logger, iteration, compliance, current_volume_fraction, change)
+        end
+
+        # Print progress
+        @printf(
+            "Iter %4d | Compliance: %.4e | Vol.Frac: %.4f | Change: %.4e\n",
+            iteration,
+            compliance,
+            current_volume_fraction,
+            change
+        )
+
+        # Export intermediate results
         if params.export_interval > 0 && iteration % params.export_interval == 0
             if !isempty(params.export_path)
-                mkpath(params.export_path)
-
-                # Create intermediate result
-                K_temp = allocate_matrix(dh)
-                f_temp = zeros(ndofs(dh))
-                assemble_stiffness_matrix_simp!(
-                    K_temp,
-                    f_temp,
+                export_intermediate_result(
+                    grid,
                     dh,
                     cellvalues,
                     material_model,
                     densities,
-                    cache,
-                )
-
-                if acceleration_data !== nothing
-                    acceleration_vector, base_density = acceleration_data
-                    variable_densities = densities .* base_density
-                    apply_variable_density_volume_force!(
-                        f_temp,
-                        dh,
-                        cellvalues,
-                        acceleration_vector,
-                        variable_densities,
-                    )
-                end
-
-                apply_forces_and_bcs!(K_temp, f_temp, forces, boundary_conditions)
-                u_temp = K_temp \ f_temp
-
-                stress_field_temp, _, _ = calculate_stresses_simp(
-                    u_temp,
-                    dh,
-                    cellvalues,
-                    material_model,
-                    densities,
-                )
-
-                intermediate_result = OptimizationResult(
-                    copy(densities),
-                    u_temp,
-                    stress_field_temp,
+                    forces,
+                    boundary_conditions,
+                    acceleration_data,
                     compliance,
                     current_volume,
                     iteration,
-                    false,  # Not converged yet
-                    copy(compliance_history),
-                    copy(volume_history),
+                    cache,
+                    compliance_history,
+                    volume_history,
+                    params.export_path,
                 )
-
-                results_data = create_results_data(grid, dh, intermediate_result)
-                export_results_vtu(
-                    results_data,
-                    joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
-                    include_history = false,
-                )
-                print_info("Exported intermediate results: iteration $iteration")
             end
         end
 
@@ -355,7 +285,6 @@ function simp_optimize(
     f = zeros(ndofs(dh))
     assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities, cache)
 
-    # Apply final acceleration if provided
     if acceleration_data !== nothing
         acceleration_vector, base_density = acceleration_data
         variable_densities = densities .* base_density
@@ -378,9 +307,15 @@ function simp_optimize(
     stress_field, max_von_mises, max_stress_cell =
         calculate_stresses_simp(u, dh, cellvalues, material_model, densities)
 
+    # Write summary and close logger
+    if logger !== nothing
+        write_summary(logger, final_compliance, final_volume, converged)
+        close_logger(logger)
+    end
+
     print_success("Optimization completed")
     print_data("Final compliance: $final_compliance")
-    print_data("Final volume fraction: $(final_volume / calculate_volume(grid))")
+    print_data("Final volume fraction: $(final_volume / total_mesh_volume)")
 
     return OptimizationResult(
         densities,
@@ -396,15 +331,82 @@ function simp_optimize(
 end
 
 """
-Helper function to apply forces and boundary conditions
+Helper function to export intermediate results.
+"""
+function export_intermediate_result(
+    grid,
+    dh,
+    cellvalues,
+    material_model,
+    densities,
+    forces,
+    boundary_conditions,
+    acceleration_data,
+    compliance,
+    current_volume,
+    iteration,
+    cache,
+    compliance_history,
+    volume_history,
+    export_path,
+)
+    K_temp = allocate_matrix(dh)
+    f_temp = zeros(ndofs(dh))
+    assemble_stiffness_matrix_simp!(
+        K_temp,
+        f_temp,
+        dh,
+        cellvalues,
+        material_model,
+        densities,
+        cache,
+    )
+
+    if acceleration_data !== nothing
+        acceleration_vector, base_density = acceleration_data
+        variable_densities = densities .* base_density
+        apply_variable_density_volume_force!(
+            f_temp,
+            dh,
+            cellvalues,
+            acceleration_vector,
+            variable_densities,
+        )
+    end
+
+    apply_forces_and_bcs!(K_temp, f_temp, forces, boundary_conditions)
+    u_temp = K_temp \ f_temp
+
+    stress_field_temp, _, _ =
+        calculate_stresses_simp(u_temp, dh, cellvalues, material_model, densities)
+
+    intermediate_result = OptimizationResult(
+        copy(densities),
+        u_temp,
+        stress_field_temp,
+        compliance,
+        current_volume,
+        iteration,
+        false,
+        copy(compliance_history),
+        copy(volume_history),
+    )
+
+    results_data = create_results_data(grid, dh, intermediate_result)
+    export_results_vtu(
+        results_data,
+        joinpath(export_path, "iter_$(lpad(iteration, 4, '0'))"),
+        include_history = false,
+    )
+end
+
+"""
+Helper function to apply forces and boundary conditions.
 """
 function apply_forces_and_bcs!(K, f, forces, boundary_conditions)
-    # Apply point forces
     for force in forces
         apply_force!(f, force...)
     end
-
-    # Apply boundary conditions
     for bc in boundary_conditions
         apply!(K, f, bc)
     end
@@ -413,27 +415,21 @@ end
 """
     calculate_element_volumes(grid, cellvalues)
 
-Calculate volume of each element in the grid using Gaussian quadrature.
+Calculate volume of each element in the grid.
 """
 function calculate_element_volumes(grid::Grid, cellvalues)
     n_cells = getncells(grid)
     element_volumes = zeros(n_cells)
 
-    # Iterate over cell indices
     for cell_idx = 1:n_cells
-        # Get coordinates of the cell using cell index
         coords = getcoordinates(grid, cell_idx)
-
-        # Reinitialize cellvalues for this cell
         reinit!(cellvalues, coords)
 
-        # Integrate 1 over element to get volume
         volume = 0.0
         for q_point = 1:getnquadpoints(cellvalues)
             dΩ = getdetJdV(cellvalues, q_point)
             volume += dΩ
         end
-
         element_volumes[cell_idx] = volume
     end
 
@@ -443,26 +439,21 @@ end
 """
     create_volume_quadrature(grid)
 
-Create cellvalues specifically for volume calculation with 3rd order quadrature.
+Create cellvalues for volume calculation with 3rd order quadrature.
 """
 function create_volume_quadrature(grid::Grid{dim}) where {dim}
-    # Get cell type from first cell
     cell = getcells(grid, 1)
 
     if cell isa Hexahedron
-        # For hexahedral elements - 3rd order quadrature
         ip = Lagrange{RefHexahedron,1}()
-        qr = QuadratureRule{RefHexahedron}(3)  # 3rd order
+        qr = QuadratureRule{RefHexahedron}(3)
     elseif cell isa Tetrahedron
-        # For tetrahedral elements - 3rd order quadrature
         ip = Lagrange{RefTetrahedron,1}()
-        qr = QuadratureRule{RefTetrahedron}(3)  # 3rd order
+        qr = QuadratureRule{RefTetrahedron}(3)
     elseif cell isa Quadrilateral && dim == 2
-        # For 2D quad elements
         ip = Lagrange{RefQuadrilateral,1}()
         qr = QuadratureRule{RefQuadrilateral}(3)
     elseif cell isa Triangle && dim == 2
-        # For 2D triangle elements  
         ip = Lagrange{RefTriangle,1}()
         qr = QuadratureRule{RefTriangle}(3)
     else

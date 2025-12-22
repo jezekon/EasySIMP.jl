@@ -111,7 +111,7 @@ println("  ✓ Force nodes (circular): $(length(force_nodes))")
 # -----------------------------------------------------------------------------
 # 6. EXPORT BOUNDARY CONDITIONS FOR VISUALIZATION
 # -----------------------------------------------------------------------------
-results_dir = "./results/3D_beam_4corners"
+results_dir = "./results/05_3D_2x1x1_4Legs"
 mkpath(results_dir)
 
 export_boundary_conditions(

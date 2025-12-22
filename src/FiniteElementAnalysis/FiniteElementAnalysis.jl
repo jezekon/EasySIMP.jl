@@ -253,9 +253,9 @@ function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data,
         ke = scaling_factor * unit_matrices[cell_id]
         assemble!(assembler, celldofs(cell), ke, fe)
     end
-    println(
-        "Stiffness matrix assembled with cached unit matrices: $(length(density_data)) elements",
-    )
+    # println(
+    #     "Stiffness matrix assembled with cached unit matrices: $(length(density_data)) elements",
+    # )
 end
 
 """
@@ -422,7 +422,7 @@ function apply_force!(f, dh, nodes, force_vector)
         end
     end
 
-    println("Applied force $force_vector distributed over $(length(nodes)) nodes")
+    # println("Applied force $force_vector distributed over $(length(nodes)) nodes")
 end
 
 """
