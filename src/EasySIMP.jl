@@ -47,4 +47,6 @@ export export_results_vtu, create_results_data, export_boundary_conditions
 
 export calculate_volume, print_info, print_success, print_warning, print_error, print_data
 
+export select_nodes_by_cylinder, select_nodes_by_arc, apply_nodal_traction!
+
 end # module EasySIMP
