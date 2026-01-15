@@ -280,14 +280,12 @@ println("  Filter radius: $(opt_params.filter_radius)")
 # 10. PREPARE FORCES FOR OPTIMIZATION LOOP
 # -----------------------------------------------------------------------------
 # Approximation: average traction distributed to nodes
-avg_traction = [0.0, 0.0, 0.0]
+forces_list = Tuple{DofHandler,Vector{Int},Vector{Float64}}[]
 for node_id in inner_nodes
     coord = grid.nodes[node_id].x
-    avg_traction .+= g(coord[1], coord[2], coord[3])
+    node_traction = g(coord[1], coord[2], coord[3]) ./ length(inner_nodes)
+    push!(forces_list, (dh, [node_id], node_traction))
 end
-avg_traction ./= length(inner_nodes)
-
-forces_list = [(dh, collect(inner_nodes), avg_traction)]
 
 # -----------------------------------------------------------------------------
 # 11. RUN OPTIMIZATION
