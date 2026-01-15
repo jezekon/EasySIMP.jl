@@ -19,7 +19,9 @@ export create_material_model,
     assemble_stiffness_matrix_simp!,
     calculate_stresses_simp,
     solve_system_simp,
-    apply_nodal_traction!
+    apply_nodal_traction!,
+    get_boundary_facets,
+    apply_surface_traction!
 
 include("SelectNodesForBC.jl")
 export select_nodes_by_plane,
@@ -486,6 +488,152 @@ function apply_nodal_traction!(
 
     println("Applied nodal traction to $(n_nodes) nodes")
     println("  Total force: $total_force")
+end
+
+"""
+    apply_surface_traction!(f, dh, grid, boundary_facets, traction_function)
+
+Applies position-dependent surface traction using proper surface integration.
+Uses FacetValues for accurate integration over element faces.
+
+Parameters:
+- `f`: Global load vector (modified in-place)
+- `dh`: DofHandler
+- `grid`: Computational mesh
+- `boundary_facets`: Set of (cell_id, local_face_id) tuples defining the surface
+- `traction_function`: Function (x, y, z) -> [Tx, Ty, Tz] returning traction vector
+
+Returns:
+- nothing (modifies f in-place)
+
+Note: This is the accurate method using Gauss quadrature over faces.
+      Use get_boundary_facets() to obtain boundary_facets from node sets.
+"""
+function apply_surface_traction!(
+    f,
+    dh::DofHandler,
+    grid::Grid,
+    boundary_facets,
+    traction_function::Function,
+)
+    # Determine element type and create appropriate FacetValues
+    cell_type = typeof(getcells(grid, 1))
+
+    if cell_type <: Ferrite.Hexahedron
+        ip = Lagrange{RefHexahedron,1}()^3
+        qr_face = FacetQuadratureRule{RefHexahedron}(2)
+    elseif cell_type <: Ferrite.Tetrahedron
+        ip = Lagrange{RefTetrahedron,1}()^3
+        qr_face = FacetQuadratureRule{RefTetrahedron}(2)
+    else
+        error("Unsupported cell type: $cell_type")
+    end
+
+    facevalues = FacetValues(qr_face, ip)
+
+    n_basefuncs = getnbasefunctions(facevalues)
+    fe = zeros(n_basefuncs)
+
+    total_force = zeros(3)
+
+    # Iterate over boundary facets
+    for (cell_id, local_face_id) in boundary_facets
+        # Get cell and reinitialize face values
+        cell = getcells(grid, cell_id)
+        coords = getcoordinates(grid, cell_id)
+        reinit!(facevalues, coords, local_face_id)
+
+        fill!(fe, 0.0)
+
+        # Integrate traction over the face
+        for q_point = 1:getnquadpoints(facevalues)
+            dΓ = getdetJdV(facevalues, q_point)
+
+            # Get spatial coordinates at quadrature point
+            x_qp = spatial_coordinate(facevalues, q_point, coords)
+
+            # Evaluate traction at this point
+            traction = traction_function(x_qp[1], x_qp[2], x_qp[3])
+
+            # Assemble: fe += N^T * traction * dΓ
+            for i = 1:n_basefuncs
+                N = shape_value(facevalues, q_point, i)
+                fe[i] += (N ⋅ traction) * dΓ
+            end
+
+            total_force .+= traction * dΓ
+        end
+
+        # Get global DOFs and assemble
+        cell_dofs = celldofs(dh, cell_id)
+        for (i, dof) in enumerate(cell_dofs)
+            f[dof] += fe[i]
+        end
+    end
+
+    println("Applied surface traction via FacetValues integration")
+    println("  Total integrated force: $total_force")
+end
+
+"""
+    get_boundary_facets(grid, nodes)
+
+Identifies boundary facets (cell faces) that contain all nodes from the given set.
+Returns Set of (cell_id, local_face_id) tuples.
+
+Parameters:
+- `grid`: Computational mesh
+- `nodes`: Set of node IDs defining the boundary surface
+
+Returns:
+- Set{Tuple{Int,Int}}: Set of (cell_id, local_face_id) pairs
+"""
+function get_boundary_facets(grid::Grid, nodes::Set{Int})
+    boundary_facets = Set{Tuple{Int,Int}}()
+
+    for cell_id = 1:getncells(grid)
+        cell = getcells(grid, cell_id)
+
+        # Get faces of this cell type
+        face_nodes_list = get_face_nodes(cell)
+
+        for (local_face_id, face_nodes) in enumerate(face_nodes_list)
+            # Check if ALL nodes of this face are in the boundary set
+            global_face_nodes = [cell.nodes[i] for i in face_nodes]
+
+            if all(n -> n in nodes, global_face_nodes)
+                push!(boundary_facets, (cell_id, local_face_id))
+            end
+        end
+    end
+
+    println("Found $(length(boundary_facets)) boundary facets")
+    return boundary_facets
+end
+
+"""
+    get_face_nodes(cell)
+
+Returns local node indices for each face of the cell.
+"""
+function get_face_nodes(cell::Ferrite.Tetrahedron)
+    return [
+        (1, 2, 3),  # Face 1
+        (1, 2, 4),  # Face 2
+        (2, 3, 4),  # Face 3
+        (1, 3, 4),  # Face 4
+    ]
+end
+
+function get_face_nodes(cell::Ferrite.Hexahedron)
+    return [
+        (1, 2, 3, 4),  # Bottom (z-)
+        (5, 6, 7, 8),  # Top (z+)
+        (1, 2, 6, 5),  # Front (y-)
+        (2, 3, 7, 6),  # Right (x+)
+        (3, 4, 8, 7),  # Back (y+)
+        (4, 1, 5, 8),  # Left (x-)
+    ]
 end
 
 """

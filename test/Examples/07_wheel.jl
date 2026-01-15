@@ -184,7 +184,9 @@ ch_fixed = apply_fixed_boundary!(K, f, dh, fixed_nodes)
 println("  ✓ Fixed support: $(length(fixed_nodes)) nodes (all DOFs)")
 
 # Apply tangential traction on inner cylinder
-apply_nodal_traction!(f, dh, grid, inner_nodes, g)
+# apply_nodal_traction!(f, dh, grid, inner_nodes, g)
+inner_facets = get_boundary_facets(grid, inner_nodes)
+apply_surface_traction!(f, dh, grid, inner_facets, g)
 
 # -----------------------------------------------------------------------------
 # 9. OPTIMIZATION PARAMETERS
