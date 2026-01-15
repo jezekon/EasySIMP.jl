@@ -155,93 +155,62 @@ end
 """
     select_nodes_by_arc(grid::Grid, 
                         center::Vector{Float64}, 
-                        normal::Vector{Float64}, 
+                        axis::Vector{Float64}, 
                         radius::Float64, 
                         angle_start::Float64, 
                         angle_end::Float64,
                         tolerance::Float64=1e-4)
 
-Selects nodes on an arc (partial circle) defined by center, normal, radius and angle range.
-Angles are in DEGREES, measured counter-clockwise from the positive X-axis 
-(projected onto the plane).
-
-Parameters:
-- `grid`: Computational mesh
-- `center`: Center of the arc [x, y, z]
-- `normal`: Normal vector to the plane containing the arc [nx, ny, nz]
-- `radius`: Radius of the arc
-- `angle_start`: Start angle in degrees [0, 360)
-- `angle_end`: End angle in degrees [0, 360)
-- `tolerance`: Distance tolerance for node selection
-
-Returns:
-- Set of node IDs that lie on the arc
+Selects nodes on a cylindrical arc defined by axis, radius and angle range.
+Angles are in DEGREES, measured counter-clockwise from reference direction.
 """
 function select_nodes_by_arc(
     grid::Grid,
     center::Vector{Float64},
-    normal::Vector{Float64},
+    axis::Vector{Float64},
     radius::Float64,
     angle_start::Float64,
     angle_end::Float64,
     tolerance::Float64 = 1e-4,
 )
-    unit_normal = normal / norm(normal)
+    unit_axis = axis / norm(axis)
 
-    # Create reference directions in the plane
-    # ref_x: reference direction for angle = 0 (projects to X-axis when normal is Z)
-    # ref_y: perpendicular to ref_x in the plane
-    if abs(unit_normal[3]) > 0.9
-        # Normal is approximately Z-axis
-        ref_x = [1.0, 0.0, 0.0] - dot([1.0, 0.0, 0.0], unit_normal) * unit_normal
+    # Reference directions perpendicular to axis
+    if abs(unit_axis[3]) > 0.9
+        ref_x = [1.0, 0.0, 0.0] - dot([1.0, 0.0, 0.0], unit_axis) * unit_axis
     else
-        # Use Z-axis to create reference
-        ref_x = cross([0.0, 0.0, 1.0], unit_normal)
+        ref_x = cross([0.0, 0.0, 1.0], unit_axis)
     end
     ref_x = ref_x / norm(ref_x)
-    ref_y = cross(unit_normal, ref_x)
+    ref_y = cross(unit_axis, ref_x)
 
     selected_nodes = Set{Int}()
 
     for node_id = 1:getnnodes(grid)
         coord = grid.nodes[node_id].x
-
-        # Vector from center to node
         v = coord - center
 
-        # Check if node is on the plane (within tolerance)
-        dist_to_plane = abs(dot(v, unit_normal))
-        if dist_to_plane > tolerance
-            continue
-        end
+        # Radial vector (perpendicular to axis)
+        radial_vec = v - dot(v, unit_axis) * unit_axis
+        radial_dist = norm(radial_vec)
 
-        # Project to plane
-        v_plane = v - dot(v, unit_normal) * unit_normal
-        radial_dist = norm(v_plane)
-
-        # Check if on the circle
+        # Check if on cylinder surface
         if abs(radial_dist - radius) > tolerance
             continue
         end
 
-        # Calculate angle in degrees
-        v_normalized = v_plane / radial_dist
-        angle_cos = dot(v_normalized, ref_x)
-        angle_sin = dot(v_normalized, ref_y)
-        angle_deg = rad2deg(atan(angle_sin, angle_cos))
-
-        # Normalize to [0, 360)
+        # Calculate angle
+        v_normalized = radial_vec / radial_dist
+        angle_deg = rad2deg(atan(dot(v_normalized, ref_y), dot(v_normalized, ref_x)))
         if angle_deg < 0
             angle_deg += 360.0
         end
 
-        # Check if angle is in range
-        if angle_start <= angle_end
-            # Normal range (e.g., 30 to 60)
-            in_range = angle_start <= angle_deg <= angle_end
+        # Check angle range
+        in_range = if angle_start <= angle_end
+            angle_start <= angle_deg <= angle_end
         else
-            # Wrapping range (e.g., 350 to 10)
-            in_range = angle_deg >= angle_start || angle_deg <= angle_end
+            angle_deg >= angle_start || angle_deg <= angle_end
         end
 
         if in_range
@@ -250,7 +219,7 @@ function select_nodes_by_arc(
     end
 
     println(
-        "Selected $(length(selected_nodes)) nodes on arc ($(angle_start)° - $(angle_end)°)",
+        "Selected $(length(selected_nodes)) nodes on arc ($(angle_start)°-$(angle_end)°)",
     )
     return selected_nodes
 end
