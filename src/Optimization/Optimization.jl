@@ -15,6 +15,9 @@ export simp_optimize, OptimizationParameters, OptimizationResult
 # Export load condition types
 export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
 
+# Export filter cache
+export FilterCache, create_filter_cache
+
 # Include submodules
 include("LoadConditions.jl")
 include("ProgressTable.jl")
@@ -151,7 +154,7 @@ end
 """
     simp_optimize(grid, dh, cellvalues, loads, boundary_conditions, params, acceleration_data=nothing)
 
-Run SIMP topology optimization.
+Run SIMP topology optimization with memory-optimized implementation.
 
 # Arguments
 - `grid`: Ferrite Grid object
@@ -164,11 +167,6 @@ Run SIMP topology optimization.
 
 # Returns
 - `OptimizationResult` containing final design and history
-
-# Example
-```julia
-results = simp_optimize(grid, dh, cellvalues, [load], [ch_fixed], params)
-```
 """
 function simp_optimize(
     grid::Grid,
@@ -192,12 +190,32 @@ function simp_optimize(
         print_info("Variable density acceleration enabled: $(acceleration_vector)")
     end
 
-    # Initialize densities
+    # =========================================================================
+    # PRE-ALLOCATIONS (ONCE BEFORE LOOP)
+    # =========================================================================
     n_cells = getncells(grid)
+    n_dofs = ndofs(dh)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    
+    # Global matrices - allocated ONCE, reused every iteration
+    K = allocate_matrix(dh)
+    f = zeros(n_dofs)
+    u = zeros(n_dofs)
+    
+    # Sensitivity vectors - allocated ONCE
+    sensitivities = zeros(n_cells)
+    filtered_sensitivities = zeros(n_cells)
+    
+    # Assembly buffer for in-place operations
+    ke_buffer = zeros(n_basefuncs, n_basefuncs)
+    fe_buffer = zeros(n_basefuncs)
+    
+    # Initialize densities
     densities = fill(params.volume_fraction, n_cells)
+    old_densities = zeros(n_cells)
 
-    # Create cache if enabled
-    cache = params.use_cache ? Dict{Symbol,Any}() : nothing
+    # Create material model
+    material_model = create_simp_material_model(params.E0, params.ν, params.Emin, params.p)
 
     # Create volume quadrature and calculate element volumes
     volume_cellvalues = create_volume_quadrature(grid)
@@ -207,31 +225,34 @@ function simp_optimize(
 
     print_data("Total mesh volume: $total_volume")
 
-    # Create material model
-    material_model = create_simp_material_model(params.E0, params.ν, params.Emin, params.p)
+    # Create FilterCache - KD-tree built ONCE
+    filter_cache = create_filter_cache(grid, params.filter_radius)
+    print_filter_info(grid, params.filter_radius, "auto")
+
+    # Create element stiffness cache if enabled
+    cache = params.use_cache ? initialize_element_cache(dh, cellvalues, material_model, n_cells) : nothing
 
     # History tracking
     compliance_history = Float64[]
     volume_history = Float64[]
 
-    # Main optimization loop
+    # =========================================================================
+    # MAIN OPTIMIZATION LOOP
+    # =========================================================================
     converged = false
     iteration = 0
 
-    for iteration = 1:params.max_iterations
-        old_densities = copy(densities)
+    for iter = 1:params.max_iterations
+        iteration = iter
+        copyto!(old_densities, densities)
 
-        # Assemble system
-        K = allocate_matrix(dh)
-        f = zeros(ndofs(dh))
-        assemble_stiffness_matrix_simp!(
-            K,
-            f,
-            dh,
-            cellvalues,
-            material_model,
-            densities,
-            cache,
+        # Reset matrices (NO reallocation - just zero out values)
+        fill!(K.nzval, 0.0)
+        fill!(f, 0.0)
+
+        # Assemble system with in-place operations
+        assemble_stiffness_matrix_simp_inplace!(
+            K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer
         )
 
         # Apply acceleration if provided
@@ -239,19 +260,15 @@ function simp_optimize(
             acceleration_vector, base_density = acceleration_data
             variable_densities = densities .* base_density
             apply_variable_density_volume_force!(
-                f,
-                dh,
-                cellvalues,
-                acceleration_vector,
-                variable_densities,
+                f, dh, cellvalues, acceleration_vector, variable_densities
             )
         end
 
         # Apply loads and boundary conditions
         apply_loads_and_bcs!(K, f, loads, boundary_conditions)
 
-        # Solve
-        u = K \ f
+        # Solve (reuse u vector)
+        ldiv!(u, cholesky(K), f)
 
         # Calculate compliance and volume
         compliance = 0.5 * dot(u, K * u)
@@ -261,26 +278,16 @@ function simp_optimize(
         push!(compliance_history, compliance)
         push!(volume_history, current_volume)
 
-        # Sensitivity analysis
-        sensitivities = calculate_sensitivities(
-            grid,
-            dh,
-            cellvalues,
-            densities,
-            u,
-            params.E0,
-            params.Emin,
-            params.ν,
-            params.p,
+        # Sensitivity analysis (reuse sensitivities vector)
+        calculate_sensitivities!(
+            sensitivities, grid, dh, cellvalues, densities, u,
+            params.E0, params.Emin, params.ν, params.p
         )
 
-        # Density filtering
-        filtered_sensitivities =
-            apply_density_filter(grid, densities, sensitivities, params.filter_radius)
-
-        if iteration == 1
-            print_filter_info(grid, params.filter_radius, "auto")
-        end
+        # Density filtering with cached neighbors (zero allocations)
+        apply_density_filter_cached!(
+            filtered_sensitivities, filter_cache, densities, sensitivities
+        )
 
         # Update densities using OC
         densities = optimality_criteria_update(
@@ -304,33 +311,33 @@ function simp_optimize(
         # Print progress
         @printf(
             "Iter %4d | Compliance: %.4e | Vol.Frac: %.4f | Change: %.4e\n",
-            iteration,
-            compliance,
-            current_volume_fraction,
-            change
+            iteration, compliance, current_volume_fraction, change
         )
 
         # Export intermediate results
         if params.export_interval > 0 && iteration % params.export_interval == 0
             if !isempty(params.export_path)
-                export_intermediate_result(
-                    grid,
-                    dh,
-                    cellvalues,
-                    material_model,
-                    densities,
-                    loads,
-                    boundary_conditions,
-                    acceleration_data,
-                    compliance,
-                    current_volume,
-                    iteration,
-                    cache,
-                    compliance_history,
-                    volume_history,
-                    params.export_path,
+                # Reuse existing K, f, u - no extra allocation
+                stress_field_temp, _, _ = calculate_stresses_simp(
+                    u, dh, cellvalues, material_model, densities
+                )
+                intermediate_result = OptimizationResult(
+                    copy(densities), copy(u), stress_field_temp, compliance,
+                    current_volume, iteration, false,
+                    copy(compliance_history), copy(volume_history)
+                )
+                results_data = create_results_data(grid, dh, intermediate_result)
+                export_results_vtu(
+                    results_data,
+                    joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
+                    include_history = false
                 )
             end
+        end
+
+        # Periodic garbage collection to prevent fragmentation
+        if iteration % 20 == 0
+            GC.gc(false)  # Minor collection
         end
 
         if change < params.tolerance
@@ -340,25 +347,25 @@ function simp_optimize(
         end
     end
 
-    # Final analysis
-    K = allocate_matrix(dh)
-    f = zeros(ndofs(dh))
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities, cache)
+    # =========================================================================
+    # FINAL ANALYSIS
+    # =========================================================================
+    fill!(K.nzval, 0.0)
+    fill!(f, 0.0)
+    assemble_stiffness_matrix_simp_inplace!(
+        K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer
+    )
 
     if acceleration_data !== nothing
         acceleration_vector, base_density = acceleration_data
         variable_densities = densities .* base_density
         apply_variable_density_volume_force!(
-            f,
-            dh,
-            cellvalues,
-            acceleration_vector,
-            variable_densities,
+            f, dh, cellvalues, acceleration_vector, variable_densities
         )
     end
 
     apply_loads_and_bcs!(K, f, loads, boundary_conditions)
-    u = K \ f
+    ldiv!(u, cholesky(K), f)
 
     final_compliance = 0.5 * dot(u, K * u)
     final_volume = calculate_volume(grid, densities)
@@ -373,21 +380,157 @@ function simp_optimize(
         close_logger(logger)
     end
 
+    # Final GC
+    GC.gc(true)
+
     print_success("Optimization completed")
     print_data("Final compliance: $final_compliance")
     print_data("Final volume fraction: $(final_volume / total_mesh_volume)")
 
     return OptimizationResult(
-        densities,
-        u,
-        stress_field,
-        final_compliance,
-        final_volume,
-        iteration,
-        converged,
-        compliance_history,
-        volume_history,
+        densities, u, stress_field, final_compliance, final_volume,
+        iteration, converged, compliance_history, volume_history
     )
+end
+
+# =============================================================================
+# IN-PLACE ASSEMBLY FUNCTIONS
+# =============================================================================
+
+"""
+    initialize_element_cache(dh, cellvalues, material_model, n_cells)
+
+Initialize element stiffness matrix cache with unit matrices.
+"""
+function initialize_element_cache(dh, cellvalues, material_model, n_cells)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
+    λ_unit, μ_unit = material_model(1.0)
+    
+    print_info("Computing element stiffness matrix cache...")
+
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        reinit!(cellvalues, cell)
+        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
+        unit_matrices[cell_id] = ke_unit
+    end
+
+    # Store unit material parameters for scaling
+    cache = Dict{Symbol,Any}()
+    cache[:unit_matrices] = unit_matrices
+    cache[:λ_unit] = λ_unit
+    cache[:μ_unit] = μ_unit
+    
+    print_success("Element cache initialized: $(n_cells) unit matrices")
+    return cache
+end
+
+"""
+    assemble_stiffness_matrix_simp_inplace!(K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer)
+
+Assemble global stiffness matrix with in-place operations to avoid allocations.
+"""
+function assemble_stiffness_matrix_simp_inplace!(
+    K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer
+)
+    if cache !== nothing
+        assemble_with_cache_inplace!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
+    else
+        assemble_variable_material_inplace!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
+    end
+end
+
+"""
+    assemble_with_cache_inplace!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
+
+Assembly using cached unit matrices with in-place scaling.
+"""
+function assemble_with_cache_inplace!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
+    unit_matrices = cache[:unit_matrices]
+    λ_unit = cache[:λ_unit]
+    
+    fill!(fe_buffer, 0.0)
+    assembler = start_assemble(K, f)
+
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        density = densities[cell_id]
+        
+        # Get current material parameters
+        λ_current, _ = material_model(density)
+        scaling_factor = λ_current / λ_unit
+        
+        # In-place scaling: ke_buffer = scaling_factor * unit_matrix
+        unit_ke = unit_matrices[cell_id]
+        @inbounds for j in 1:size(ke_buffer, 2)
+            for i in 1:size(ke_buffer, 1)
+                ke_buffer[i, j] = scaling_factor * unit_ke[i, j]
+            end
+        end
+        
+        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
+    end
+end
+
+"""
+    assemble_variable_material_inplace!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
+
+Assembly for variable material properties without caching.
+"""
+function assemble_variable_material_inplace!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
+    fill!(fe_buffer, 0.0)
+    assembler = start_assemble(K, f)
+
+    for cell in CellIterator(dh)
+        reinit!(cellvalues, cell)
+
+        cell_id = cellid(cell)
+        density = densities[cell_id]
+        λ, μ = material_model(density)
+
+        # Compute element stiffness into buffer
+        assemble_element_stiffness_matrix!(ke_buffer, cellvalues, λ, μ)
+        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
+    end
+end
+
+"""
+    assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
+
+Compute element stiffness matrix in-place.
+"""
+function assemble_element_stiffness_matrix!(ke::Matrix{Float64}, cellvalues, λ, μ)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    fill!(ke, 0.0)
+
+    for q_point = 1:getnquadpoints(cellvalues)
+        dΩ = getdetJdV(cellvalues, q_point)
+
+        for i = 1:n_basefuncs
+            ∇Ni = shape_gradient(cellvalues, q_point, i)
+            εi = symmetric(∇Ni)
+
+            for j = 1:n_basefuncs
+                ∇Nj = shape_gradient(cellvalues, q_point, j)
+                εj = symmetric(∇Nj)
+                σ = λ * tr(εj) * one(εj) + 2μ * εj
+                ke[i, j] += (εi ⊡ σ) * dΩ
+            end
+        end
+    end
+end
+
+"""
+    assemble_element_stiffness_matrix(cellvalues, λ, μ)
+
+Compute element stiffness matrix (allocating version for cache initialization).
+"""
+function assemble_element_stiffness_matrix(cellvalues, λ, μ)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    ke = zeros(n_basefuncs, n_basefuncs)
+    assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
+    return ke
 end
 
 # =============================================================================
@@ -398,90 +541,15 @@ end
     apply_loads_and_bcs!(K, f, loads, boundary_conditions)
 
 Apply all load conditions and boundary conditions to the system.
-Supports AbstractLoadCondition types and legacy tuple format.
 """
 function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
-    # Apply each load condition
     for load in loads
         apply_load_condition!(f, load)
     end
 
-    # Apply boundary conditions
     for bc in boundary_conditions
         apply!(K, f, bc)
     end
-end
-
-"""
-    export_intermediate_result(...)
-
-Export intermediate optimization results to VTU file.
-"""
-function export_intermediate_result(
-    grid,
-    dh,
-    cellvalues,
-    material_model,
-    densities,
-    loads,
-    boundary_conditions,
-    acceleration_data,
-    compliance,
-    current_volume,
-    iteration,
-    cache,
-    compliance_history,
-    volume_history,
-    export_path,
-)
-    K_temp = allocate_matrix(dh)
-    f_temp = zeros(ndofs(dh))
-    assemble_stiffness_matrix_simp!(
-        K_temp,
-        f_temp,
-        dh,
-        cellvalues,
-        material_model,
-        densities,
-        cache,
-    )
-
-    if acceleration_data !== nothing
-        acceleration_vector, base_density = acceleration_data
-        variable_densities = densities .* base_density
-        apply_variable_density_volume_force!(
-            f_temp,
-            dh,
-            cellvalues,
-            acceleration_vector,
-            variable_densities,
-        )
-    end
-
-    apply_loads_and_bcs!(K_temp, f_temp, loads, boundary_conditions)
-    u_temp = K_temp \ f_temp
-
-    stress_field_temp, _, _ =
-        calculate_stresses_simp(u_temp, dh, cellvalues, material_model, densities)
-
-    intermediate_result = OptimizationResult(
-        copy(densities),
-        u_temp,
-        stress_field_temp,
-        compliance,
-        current_volume,
-        iteration,
-        false,
-        copy(compliance_history),
-        copy(volume_history),
-    )
-
-    results_data = create_results_data(grid, dh, intermediate_result)
-    export_results_vtu(
-        results_data,
-        joinpath(export_path, "iter_$(lpad(iteration, 4, '0'))"),
-        include_history = false,
-    )
 end
 
 """
