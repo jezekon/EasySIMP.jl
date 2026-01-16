@@ -10,7 +10,7 @@ EasySIMP is a Julia package for topology optimization using the Solid Isotropic 
 
 - **SIMP Optimization**: Classic topology optimization with penalization parameter control and density filtering
 - **Mesh Support**: Linear hexahedral and tetrahedral elements; supports VTU import and simple hexahedral mesh generation
-- **Boundary Conditions**: Fixed supports, sliding planes, distributed forces, and body forces
+- **Boundary Conditions**: Fixed supports, sliding planes, distributed forces, surface traction, and body forces
 - **Progress Monitoring**: Real-time optimization progress with compliance and volume tracking
 - **ParaView Export**: VTU output with density field, displacement, and stress
 
@@ -35,16 +35,17 @@ Run SIMP topology optimization:
 simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data)
 ```
 
-#### Parameters:
+#### Parameters
+
 - `grid::Grid`: Ferrite Grid object containing the mesh
 - `dh::DofHandler`: Degree of freedom handler from Ferrite
 - `cellvalues`: CellValues for finite element integration
-- `forces`: Vector of tuples `(dh, node_indices, force_vector)` for applied forces
+- `forces`: Vector of load conditions - either `AbstractLoadCondition` types (`PointLoad`, `SurfaceTractionLoad`) or legacy tuples `(dh, node_indices, force_vector)`
 - `boundary_conditions`: Vector of constraint handlers (fixed or sliding)
 - `params::OptimizationParameters`: Configuration options
 - `acceleration_data`: Optional tuple `(acceleration_vector, base_density)` for body forces
 
-#### Return Value:
+#### Return Value
 - `OptimizationResult`: Complete optimization results including densities, displacements, stresses, and convergence history
 - **Output files**: `.vtu` mesh files for visualization in ParaView
 
@@ -66,7 +67,8 @@ params = OptimizationParameters(;
     damping = 0.5,                         # Optimality criteria damping factor
     use_cache = true,                      # Enable performance caching
     export_interval = 0,                   # Export every N iterations (0 = disabled)
-    export_path = ""                       # Path for intermediate results
+    export_path = "",                      # Path for intermediate results
+    task_name = "SIMP_Optimization"        # Name for logging files
 )
 ```
 
@@ -80,6 +82,7 @@ params = OptimizationParameters(;
 - **filter_radius**: Controls smoothing of density field (1.5-2.5 × average element size recommended)
 - **export_interval**: When > 0, exports intermediate results every N iterations for animation
 - **use_cache**: Enables caching of element stiffness matrices for improved performance
+- **task_name**: Identifier for logging and summary files
 
 ### Example Usage
 
@@ -132,7 +135,6 @@ export_results_vtu(results_data, "cantilever_beam")
 
 For complete examples with detailed documentation, see [`test/Examples/`](test/Examples/):
 
-#### Basic Examples
 ```julia
 # Simple cantilever beam with fixed support
 julia --project=. test/Examples/01_basic_cantilever.jl
@@ -142,19 +144,18 @@ julia --project=. test/Examples/02_sliding_support.jl
 
 # Beam under acceleration (body forces)
 julia --project=. test/Examples/03_with_acceleration.jl
-```
 
-#### Complex Example
-```julia
 # Multi-objective gripper with imported mesh
-# Features: multiple loads, symmetry, body forces
 julia --project=. test/Examples/04_gripper_complex.jl
 ```
 
+Additional examples (MBB beam, wheel with surface traction, etc.) are available in the `test/Examples/` directory.
+
 ### Visualization in ParaView
+
 1. Load the output VTU file in ParaView
-2. Apply **Clip with implicit function**
-3. Clip Type: `density` to show solid regions (adjust Value and select Invert if needed)
+2. Apply **Threshold** filter on `density` field
+3. Set lower threshold (e.g., 0.3-0.5) to show solid regions
 
 For intermediate results animation:
 1. Load all `iter_*.vtu` files as a time series
