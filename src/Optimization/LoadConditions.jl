@@ -54,12 +54,14 @@ PointLoad(t::Tuple{DofHandler,Vector{Int},Vector{Float64}}) = PointLoad(t[1], t[
 
 Position-dependent surface traction using proper Gauss quadrature integration.
 Most accurate method for distributed loads on surfaces.
+FacetValues are cached for performance to avoid memory fragmentation.
 
 # Fields
 - `dh::DofHandler`: Degree of freedom handler
 - `grid::Grid`: Computational mesh
 - `boundary_facets::Set{Tuple{Int,Int}}`: Set of (cell_id, local_face_id) tuples
 - `traction_function::Function`: Function (x, y, z) -> [Tx, Ty, Tz]
+- `facevalues::FacetValues`: Cached FacetValues for integration
 
 # Example
 ```julia
@@ -74,6 +76,7 @@ struct SurfaceTractionLoad <: AbstractLoadCondition
     grid::Grid
     boundary_facets::Set{Tuple{Int,Int}}
     traction_function::Function
+    facevalues::FacetValues
 end
 
 # Convenience constructor from node set
@@ -84,7 +87,21 @@ function SurfaceTractionLoad(
     traction_fn::Function,
 )
     facets = get_boundary_facets(grid, nodes)
-    return SurfaceTractionLoad(dh, grid, facets, traction_fn)
+
+    # Create FacetValues once for reuse
+    cell_type = typeof(getcells(grid, 1))
+    if cell_type <: Ferrite.Hexahedron
+        ip = Lagrange{RefHexahedron,1}()^3
+        qr_face = FacetQuadratureRule{RefHexahedron}(2)
+    elseif cell_type <: Ferrite.Tetrahedron
+        ip = Lagrange{RefTetrahedron,1}()^3
+        qr_face = FacetQuadratureRule{RefTetrahedron}(2)
+    else
+        error("Unsupported cell type: $cell_type")
+    end
+    fv = FacetValues(qr_face, ip)
+
+    return SurfaceTractionLoad(dh, grid, facets, traction_fn, fv)
 end
 
 # =============================================================================
@@ -101,13 +118,34 @@ function apply_load_condition!(f::Vector{Float64}, load::PointLoad)
 end
 
 function apply_load_condition!(f::Vector{Float64}, load::SurfaceTractionLoad)
-    apply_surface_traction!(
-        f,
-        load.dh,
-        load.grid,
-        load.boundary_facets,
-        load.traction_function,
-    )
+    facevalues = load.facevalues
+    grid = load.grid
+    dh = load.dh
+
+    n_basefuncs = getnbasefunctions(facevalues)
+    fe = zeros(n_basefuncs)
+
+    for (cell_id, local_face_id) in load.boundary_facets
+        coords = getcoordinates(grid, cell_id)
+        reinit!(facevalues, coords, local_face_id)
+        fill!(fe, 0.0)
+
+        for q_point = 1:getnquadpoints(facevalues)
+            dΓ = getdetJdV(facevalues, q_point)
+            x_qp = spatial_coordinate(facevalues, q_point, coords)
+            traction = load.traction_function(x_qp[1], x_qp[2], x_qp[3])
+
+            for i = 1:n_basefuncs
+                N = shape_value(facevalues, q_point, i)
+                fe[i] += (N ⋅ traction) * dΓ
+            end
+        end
+
+        cell_dofs = celldofs(dh, cell_id)
+        for (i, dof) in enumerate(cell_dofs)
+            f[dof] += fe[i]
+        end
+    end
 end
 
 # Backward compatibility: handle tuple as PointLoad
