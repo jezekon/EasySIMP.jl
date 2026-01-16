@@ -9,12 +9,21 @@ Supports point loads, nodal traction, and surface traction with position-depende
 export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
 export apply_load_condition!
 
+# =============================================================================
+# ABSTRACT BASE TYPE
+# =============================================================================
+
 """
     AbstractLoadCondition
 
-Abstract base type for all load conditions.
+Abstract base type for all load conditions in topology optimization.
+Concrete implementations must define `apply_load_condition!(f, load)`.
 """
 abstract type AbstractLoadCondition end
+
+# =============================================================================
+# POINT LOAD
+# =============================================================================
 
 """
     PointLoad
@@ -22,9 +31,14 @@ abstract type AbstractLoadCondition end
 Constant point force distributed equally across specified nodes.
 
 # Fields
-- `dh`: DofHandler
-- `nodes`: Vector of node IDs
-- `force_vector`: Force vector [Fx, Fy, Fz]
+- `dh::DofHandler`: Degree of freedom handler
+- `nodes::Vector{Int}`: Vector of node IDs where force is applied
+- `force_vector::Vector{Float64}`: Force vector [Fx, Fy, Fz] in Newtons
+
+# Example
+```julia
+load = PointLoad(dh, [1, 2, 3], [0.0, -1000.0, 0.0])
+```
 """
 struct PointLoad <: AbstractLoadCondition
     dh::DofHandler
@@ -32,20 +46,28 @@ struct PointLoad <: AbstractLoadCondition
     force_vector::Vector{Float64}
 end
 
-# Constructor from tuple (for backward compatibility)
+# Constructor from tuple (backward compatibility with legacy format)
 PointLoad(t::Tuple{DofHandler,Vector{Int},Vector{Float64}}) = PointLoad(t[1], t[2], t[3])
 
 """
     SurfaceTractionLoad
 
 Position-dependent surface traction using proper Gauss quadrature integration.
-Best accuracy for distributed loads on surfaces.
+Most accurate method for distributed loads on surfaces.
 
 # Fields
-- `dh`: DofHandler
-- `grid`: Computational mesh
-- `boundary_facets`: Set of (cell_id, local_face_id) tuples
-- `traction_function`: Function (x, y, z) -> [Tx, Ty, Tz]
+- `dh::DofHandler`: Degree of freedom handler
+- `grid::Grid`: Computational mesh
+- `boundary_facets::Set{Tuple{Int,Int}}`: Set of (cell_id, local_face_id) tuples
+- `traction_function::Function`: Function (x, y, z) -> [Tx, Ty, Tz]
+
+# Example
+```julia
+# Tangential traction on inner cylinder
+g(x, y, z) = [100.0 * (-y), 100.0 * x, 0.0]
+inner_facets = get_boundary_facets(grid, inner_nodes)
+load = SurfaceTractionLoad(dh, grid, inner_facets, g)
+```
 """
 struct SurfaceTractionLoad <: AbstractLoadCondition
     dh::DofHandler
@@ -54,7 +76,7 @@ struct SurfaceTractionLoad <: AbstractLoadCondition
     traction_function::Function
 end
 
-# Convenience constructor from nodes
+# Convenience constructor from node set
 function SurfaceTractionLoad(
     dh::DofHandler,
     grid::Grid,
@@ -105,6 +127,10 @@ end
 
 Convert various load formats to AbstractLoadCondition.
 Provides backward compatibility with tuple format.
+
+# Supported input types
+- `AbstractLoadCondition`: Returned as-is
+- `Tuple{DofHandler, Vector{Int}, Vector{Float64}}`: Converted to PointLoad
 """
 function convert_to_load_condition(load::AbstractLoadCondition)
     return load

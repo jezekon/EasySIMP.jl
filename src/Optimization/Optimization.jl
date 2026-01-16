@@ -23,10 +23,30 @@ include("DensityFilter.jl")
 include("SensitivityAnalysis.jl")
 include("OptimizationLogger.jl")
 
+# =============================================================================
+# OPTIMIZATION PARAMETERS
+# =============================================================================
+
 """
     OptimizationParameters
 
 Parameters for SIMP topology optimization.
+
+# Fields
+- `E0`: Base Young's modulus
+- `Emin`: Minimum Young's modulus (void regions)
+- `ν`: Poisson's ratio
+- `p`: SIMP penalization power
+- `volume_fraction`: Target volume fraction
+- `max_iterations`: Maximum optimization iterations
+- `tolerance`: Convergence tolerance
+- `filter_radius`: Density filter radius (× element size)
+- `move_limit`: OC move limit
+- `damping`: OC damping coefficient
+- `use_cache`: Enable element matrix caching
+- `export_interval`: Export results every N iterations (0 = disabled)
+- `export_path`: Directory for intermediate results
+- `task_name`: Name for logging
 """
 mutable struct OptimizationParameters
     # Material properties
@@ -92,10 +112,25 @@ mutable struct OptimizationParameters
     end
 end
 
+# =============================================================================
+# OPTIMIZATION RESULT
+# =============================================================================
+
 """
     OptimizationResult
 
 Results from SIMP topology optimization.
+
+# Fields
+- `densities`: Final density distribution
+- `displacements`: Final displacement vector
+- `stresses`: Stress field (Dict of stress tensors)
+- `compliance`: Final compliance value
+- `volume`: Final volume
+- `iterations`: Number of iterations performed
+- `converged`: Whether optimization converged
+- `compliance_history`: Compliance at each iteration
+- `volume_history`: Volume at each iteration
 """
 struct OptimizationResult
     densities::Vector{Float64}
@@ -109,22 +144,31 @@ struct OptimizationResult
     volume_history::Vector{Float64}
 end
 
+# =============================================================================
+# MAIN OPTIMIZATION FUNCTION
+# =============================================================================
+
 """
     simp_optimize(grid, dh, cellvalues, loads, boundary_conditions, params, acceleration_data=nothing)
 
-Main SIMP topology optimization function.
+Run SIMP topology optimization.
 
 # Arguments
 - `grid`: Ferrite Grid object
 - `dh`: DofHandler
 - `cellvalues`: CellValues for interpolation
-- `loads`: Vector of load conditions. Supported types:
-    - `PointLoad`: Constant force distributed to nodes
-    - `SurfaceTractionLoad`: Position-dependent surface traction (Gauss integration)
-    - `Tuple{DofHandler, Vector{Int}, Vector{Float64}}`: Legacy format (converted to PointLoad)
+- `loads`: Vector of load conditions (PointLoad, SurfaceTractionLoad, or legacy tuple)
 - `boundary_conditions`: Vector of ConstraintHandlers
 - `params`: OptimizationParameters
 - `acceleration_data`: Optional tuple (acceleration_vector, density) for body forces
+
+# Returns
+- `OptimizationResult` containing final design and history
+
+# Example
+```julia
+results = simp_optimize(grid, dh, cellvalues, [load], [ch_fixed], params)
+```
 """
 function simp_optimize(
     grid::Grid,
@@ -148,14 +192,14 @@ function simp_optimize(
         print_info("Variable density acceleration enabled: $(acceleration_vector)")
     end
 
-    # Initialize
+    # Initialize densities
     n_cells = getncells(grid)
     densities = fill(params.volume_fraction, n_cells)
 
     # Create cache if enabled
     cache = params.use_cache ? Dict{Symbol,Any}() : nothing
 
-    # Create volume quadrature
+    # Create volume quadrature and calculate element volumes
     volume_cellvalues = create_volume_quadrature(grid)
     element_volumes = calculate_element_volumes(grid, volume_cellvalues)
     total_volume = sum(element_volumes)
@@ -203,7 +247,7 @@ function simp_optimize(
             )
         end
 
-        # Apply loads and BCs
+        # Apply loads and boundary conditions
         apply_loads_and_bcs!(K, f, loads, boundary_conditions)
 
         # Solve
@@ -346,11 +390,15 @@ function simp_optimize(
     )
 end
 
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
 """
     apply_loads_and_bcs!(K, f, loads, boundary_conditions)
 
 Apply all load conditions and boundary conditions to the system.
-Supports both new AbstractLoadCondition types and legacy tuple format.
+Supports AbstractLoadCondition types and legacy tuple format.
 """
 function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
     # Apply each load condition
@@ -365,7 +413,9 @@ function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
 end
 
 """
-Helper function to export intermediate results.
+    export_intermediate_result(...)
+
+Export intermediate optimization results to VTU file.
 """
 function export_intermediate_result(
     grid,
@@ -461,7 +511,7 @@ end
 """
     create_volume_quadrature(grid)
 
-Create cellvalues for volume calculation with 3rd order quadrature.
+Create CellValues for volume calculation with 3rd order quadrature.
 """
 function create_volume_quadrature(grid::Grid{dim}) where {dim}
     cell = getcells(grid, 1)
