@@ -12,17 +12,41 @@ using ..PostProcessing
 # Export main functions
 export simp_optimize, OptimizationParameters, OptimizationResult
 
+# Export load condition types
+export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
+
 # Include submodules
+include("LoadConditions.jl")
 include("ProgressTable.jl")
 include("OptimalityCriteria.jl")
 include("DensityFilter.jl")
 include("SensitivityAnalysis.jl")
 include("OptimizationLogger.jl")
 
+# =============================================================================
+# OPTIMIZATION PARAMETERS
+# =============================================================================
+
 """
     OptimizationParameters
 
 Parameters for SIMP topology optimization.
+
+# Fields
+- `E0`: Base Young's modulus
+- `Emin`: Minimum Young's modulus (void regions)
+- `ν`: Poisson's ratio
+- `p`: SIMP penalization power
+- `volume_fraction`: Target volume fraction
+- `max_iterations`: Maximum optimization iterations
+- `tolerance`: Convergence tolerance
+- `filter_radius`: Density filter radius (× element size)
+- `move_limit`: OC move limit
+- `damping`: OC damping coefficient
+- `use_cache`: Enable element matrix caching
+- `export_interval`: Export results every N iterations (0 = disabled)
+- `export_path`: Directory for intermediate results
+- `task_name`: Name for logging
 """
 mutable struct OptimizationParameters
     # Material properties
@@ -88,10 +112,25 @@ mutable struct OptimizationParameters
     end
 end
 
+# =============================================================================
+# OPTIMIZATION RESULT
+# =============================================================================
+
 """
     OptimizationResult
 
 Results from SIMP topology optimization.
+
+# Fields
+- `densities`: Final density distribution
+- `displacements`: Final displacement vector
+- `stresses`: Stress field (Dict of stress tensors)
+- `compliance`: Final compliance value
+- `volume`: Final volume
+- `iterations`: Number of iterations performed
+- `converged`: Whether optimization converged
+- `compliance_history`: Compliance at each iteration
+- `volume_history`: Volume at each iteration
 """
 struct OptimizationResult
     densities::Vector{Float64}
@@ -105,16 +144,37 @@ struct OptimizationResult
     volume_history::Vector{Float64}
 end
 
-"""
-    simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data=nothing)
+# =============================================================================
+# MAIN OPTIMIZATION FUNCTION
+# =============================================================================
 
-Main SIMP topology optimization function.
+"""
+    simp_optimize(grid, dh, cellvalues, loads, boundary_conditions, params, acceleration_data=nothing)
+
+Run SIMP topology optimization.
+
+# Arguments
+- `grid`: Ferrite Grid object
+- `dh`: DofHandler
+- `cellvalues`: CellValues for interpolation
+- `loads`: Vector of load conditions (PointLoad, SurfaceTractionLoad, or legacy tuple)
+- `boundary_conditions`: Vector of ConstraintHandlers
+- `params`: OptimizationParameters
+- `acceleration_data`: Optional tuple (acceleration_vector, density) for body forces
+
+# Returns
+- `OptimizationResult` containing final design and history
+
+# Example
+```julia
+results = simp_optimize(grid, dh, cellvalues, [load], [ch_fixed], params)
+```
 """
 function simp_optimize(
     grid::Grid,
     dh::DofHandler,
     cellvalues,
-    forces,
+    loads,
     boundary_conditions,
     params::OptimizationParameters,
     acceleration_data = nothing,
@@ -132,14 +192,14 @@ function simp_optimize(
         print_info("Variable density acceleration enabled: $(acceleration_vector)")
     end
 
-    # Initialize
+    # Initialize densities
     n_cells = getncells(grid)
     densities = fill(params.volume_fraction, n_cells)
 
     # Create cache if enabled
     cache = params.use_cache ? Dict{Symbol,Any}() : nothing
 
-    # Create volume quadrature
+    # Create volume quadrature and calculate element volumes
     volume_cellvalues = create_volume_quadrature(grid)
     element_volumes = calculate_element_volumes(grid, volume_cellvalues)
     total_volume = sum(element_volumes)
@@ -187,8 +247,8 @@ function simp_optimize(
             )
         end
 
-        # Apply forces and BCs
-        apply_forces_and_bcs!(K, f, forces, boundary_conditions)
+        # Apply loads and boundary conditions
+        apply_loads_and_bcs!(K, f, loads, boundary_conditions)
 
         # Solve
         u = K \ f
@@ -259,7 +319,7 @@ function simp_optimize(
                     cellvalues,
                     material_model,
                     densities,
-                    forces,
+                    loads,
                     boundary_conditions,
                     acceleration_data,
                     compliance,
@@ -297,7 +357,7 @@ function simp_optimize(
         )
     end
 
-    apply_forces_and_bcs!(K, f, forces, boundary_conditions)
+    apply_loads_and_bcs!(K, f, loads, boundary_conditions)
     u = K \ f
 
     final_compliance = 0.5 * dot(u, K * u)
@@ -330,8 +390,32 @@ function simp_optimize(
     )
 end
 
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
 """
-Helper function to export intermediate results.
+    apply_loads_and_bcs!(K, f, loads, boundary_conditions)
+
+Apply all load conditions and boundary conditions to the system.
+Supports AbstractLoadCondition types and legacy tuple format.
+"""
+function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
+    # Apply each load condition
+    for load in loads
+        apply_load_condition!(f, load)
+    end
+
+    # Apply boundary conditions
+    for bc in boundary_conditions
+        apply!(K, f, bc)
+    end
+end
+
+"""
+    export_intermediate_result(...)
+
+Export intermediate optimization results to VTU file.
 """
 function export_intermediate_result(
     grid,
@@ -339,7 +423,7 @@ function export_intermediate_result(
     cellvalues,
     material_model,
     densities,
-    forces,
+    loads,
     boundary_conditions,
     acceleration_data,
     compliance,
@@ -374,7 +458,7 @@ function export_intermediate_result(
         )
     end
 
-    apply_forces_and_bcs!(K_temp, f_temp, forces, boundary_conditions)
+    apply_loads_and_bcs!(K_temp, f_temp, loads, boundary_conditions)
     u_temp = K_temp \ f_temp
 
     stress_field_temp, _, _ =
@@ -398,18 +482,6 @@ function export_intermediate_result(
         joinpath(export_path, "iter_$(lpad(iteration, 4, '0'))"),
         include_history = false,
     )
-end
-
-"""
-Helper function to apply forces and boundary conditions.
-"""
-function apply_forces_and_bcs!(K, f, forces, boundary_conditions)
-    for force in forces
-        apply_force!(f, force...)
-    end
-    for bc in boundary_conditions
-        apply!(K, f, bc)
-    end
 end
 
 """
@@ -439,7 +511,7 @@ end
 """
     create_volume_quadrature(grid)
 
-Create cellvalues for volume calculation with 3rd order quadrature.
+Create CellValues for volume calculation with 3rd order quadrature.
 """
 function create_volume_quadrature(grid::Grid{dim}) where {dim}
     cell = getcells(grid, 1)
