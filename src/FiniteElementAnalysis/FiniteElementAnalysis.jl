@@ -19,7 +19,6 @@ export create_material_model,
     assemble_stiffness_matrix_simp!,
     calculate_stresses_simp,
     solve_system_simp,
-    apply_nodal_traction!,
     get_boundary_facets,
     apply_surface_traction!
 
@@ -429,66 +428,6 @@ function apply_force!(f, dh, nodes, force_vector)
     # println("Applied force $force_vector distributed over $(length(nodes)) nodes")
 end
 
-"""
-    apply_nodal_traction!(f, dh, grid, nodes, traction_function)
-
-Applies position-dependent traction forces to nodes.
-Each node receives a force based on its spatial coordinates.
-
-Parameters:
-- `f`: Global load vector (modified in-place)
-- `dh`: DofHandler
-- `grid`: Computational mesh (needed for node coordinates)
-- `nodes`: Set or Array of node IDs where traction is applied
-- `traction_function`: Function (x, y, z) -> [Fx, Fy, Fz] returning force per node
-
-Returns:
-- nothing (modifies f in-place)
-
-Note: This is a nodal approximation of surface traction.
-      For accurate results, nodes should be uniformly distributed.
-"""
-function apply_nodal_traction!(
-    f,
-    dh::DofHandler,
-    grid::Grid,
-    nodes,
-    traction_function::Function,
-)
-    if isempty(nodes)
-        error("No nodes provided for traction application.")
-    end
-
-    node_to_dofs = get_node_dofs(dh)
-    n_nodes = length(nodes)
-
-    total_force = zeros(3)
-
-    for node_id in nodes
-        if haskey(node_to_dofs, node_id)
-            coord = grid.nodes[node_id].x
-            x, y, z = coord[1], coord[2], length(coord) >= 3 ? coord[3] : 0.0
-
-            # Get position-dependent traction
-            traction = traction_function(x, y, z)
-
-            # Distribute equally among nodes (simple approximation)
-            force_contribution = traction ./ n_nodes
-
-            dofs = node_to_dofs[node_id]
-            for (i, component) in enumerate(force_contribution)
-                if i <= length(dofs)
-                    f[dofs[i]] += component
-                end
-            end
-
-            total_force .+= force_contribution
-        end
-    end
-
-    println("Applied nodal traction to $(n_nodes) nodes")
-    println("  Total force: $total_force")
-end
 
 """
     apply_surface_traction!(f, dh, grid, boundary_facets, traction_function)

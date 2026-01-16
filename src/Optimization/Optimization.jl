@@ -13,7 +13,7 @@ using ..PostProcessing
 export simp_optimize, OptimizationParameters, OptimizationResult
 
 # Export load condition types
-export AbstractLoadCondition, PointLoad, SurfaceTractionLoad, NodalTractionLoad
+export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
 
 # Include submodules
 include("LoadConditions.jl")
@@ -121,7 +121,6 @@ Main SIMP topology optimization function.
 - `loads`: Vector of load conditions. Supported types:
     - `PointLoad`: Constant force distributed to nodes
     - `SurfaceTractionLoad`: Position-dependent surface traction (Gauss integration)
-    - `NodalTractionLoad`: Position-dependent nodal traction
     - `Tuple{DofHandler, Vector{Int}, Vector{Float64}}`: Legacy format (converted to PointLoad)
 - `boundary_conditions`: Vector of ConstraintHandlers
 - `params`: OptimizationParameters

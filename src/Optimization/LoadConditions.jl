@@ -6,7 +6,7 @@ Abstract load condition types for SIMP topology optimization.
 Supports point loads, nodal traction, and surface traction with position-dependent functions.
 """
 
-export AbstractLoadCondition, PointLoad, SurfaceTractionLoad, NodalTractionLoad
+export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
 export apply_load_condition!
 
 """
@@ -65,25 +65,6 @@ function SurfaceTractionLoad(
     return SurfaceTractionLoad(dh, grid, facets, traction_fn)
 end
 
-"""
-    NodalTractionLoad
-
-Position-dependent traction applied directly to nodes.
-Simpler but less accurate than SurfaceTractionLoad.
-
-# Fields
-- `dh`: DofHandler
-- `grid`: Computational mesh
-- `nodes`: Set or Vector of node IDs
-- `traction_function`: Function (x, y, z) -> [Fx, Fy, Fz]
-"""
-struct NodalTractionLoad <: AbstractLoadCondition
-    dh::DofHandler
-    grid::Grid
-    nodes::Union{Set{Int},Vector{Int}}
-    traction_function::Function
-end
-
 # =============================================================================
 # APPLY FUNCTIONS
 # =============================================================================
@@ -105,10 +86,6 @@ function apply_load_condition!(f::Vector{Float64}, load::SurfaceTractionLoad)
         load.boundary_facets,
         load.traction_function,
     )
-end
-
-function apply_load_condition!(f::Vector{Float64}, load::NodalTractionLoad)
-    apply_nodal_traction!(f, load.dh, load.grid, load.nodes, load.traction_function)
 end
 
 # Backward compatibility: handle tuple as PointLoad

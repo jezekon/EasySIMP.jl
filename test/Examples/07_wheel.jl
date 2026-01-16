@@ -291,11 +291,7 @@ println("  Filter radius: $(opt_params.filter_radius)")
 traction_magnitude = 100.0
 g(x, y, z) = [traction_magnitude * (-y), traction_magnitude * x, 0.0]
 
-# Option 1: SurfaceTractionLoad (recommended - uses Gauss quadrature)
 traction_load = SurfaceTractionLoad(dh, grid, inner_nodes, g)
-
-# Option 2: NodalTractionLoad (simpler, less accurate)
-# traction_load = NodalTractionLoad(dh, grid, inner_nodes, g)
 
 # Load list for optimization
 loads = [traction_load]
