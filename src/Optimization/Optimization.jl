@@ -12,7 +12,11 @@ using ..PostProcessing
 # Export main functions
 export simp_optimize, OptimizationParameters, OptimizationResult
 
+# Export load condition types
+export AbstractLoadCondition, PointLoad, SurfaceTractionLoad, NodalTractionLoad
+
 # Include submodules
+include("LoadConditions.jl")
 include("ProgressTable.jl")
 include("OptimalityCriteria.jl")
 include("DensityFilter.jl")
@@ -106,15 +110,28 @@ struct OptimizationResult
 end
 
 """
-    simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data=nothing)
+    simp_optimize(grid, dh, cellvalues, loads, boundary_conditions, params, acceleration_data=nothing)
 
 Main SIMP topology optimization function.
+
+# Arguments
+- `grid`: Ferrite Grid object
+- `dh`: DofHandler
+- `cellvalues`: CellValues for interpolation
+- `loads`: Vector of load conditions. Supported types:
+    - `PointLoad`: Constant force distributed to nodes
+    - `SurfaceTractionLoad`: Position-dependent surface traction (Gauss integration)
+    - `NodalTractionLoad`: Position-dependent nodal traction
+    - `Tuple{DofHandler, Vector{Int}, Vector{Float64}}`: Legacy format (converted to PointLoad)
+- `boundary_conditions`: Vector of ConstraintHandlers
+- `params`: OptimizationParameters
+- `acceleration_data`: Optional tuple (acceleration_vector, density) for body forces
 """
 function simp_optimize(
     grid::Grid,
     dh::DofHandler,
     cellvalues,
-    forces,
+    loads,
     boundary_conditions,
     params::OptimizationParameters,
     acceleration_data = nothing,
@@ -187,8 +204,8 @@ function simp_optimize(
             )
         end
 
-        # Apply forces and BCs
-        apply_forces_and_bcs!(K, f, forces, boundary_conditions)
+        # Apply loads and BCs
+        apply_loads_and_bcs!(K, f, loads, boundary_conditions)
 
         # Solve
         u = K \ f
@@ -259,7 +276,7 @@ function simp_optimize(
                     cellvalues,
                     material_model,
                     densities,
-                    forces,
+                    loads,
                     boundary_conditions,
                     acceleration_data,
                     compliance,
@@ -297,7 +314,7 @@ function simp_optimize(
         )
     end
 
-    apply_forces_and_bcs!(K, f, forces, boundary_conditions)
+    apply_loads_and_bcs!(K, f, loads, boundary_conditions)
     u = K \ f
 
     final_compliance = 0.5 * dot(u, K * u)
@@ -331,6 +348,24 @@ function simp_optimize(
 end
 
 """
+    apply_loads_and_bcs!(K, f, loads, boundary_conditions)
+
+Apply all load conditions and boundary conditions to the system.
+Supports both new AbstractLoadCondition types and legacy tuple format.
+"""
+function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
+    # Apply each load condition
+    for load in loads
+        apply_load_condition!(f, load)
+    end
+
+    # Apply boundary conditions
+    for bc in boundary_conditions
+        apply!(K, f, bc)
+    end
+end
+
+"""
 Helper function to export intermediate results.
 """
 function export_intermediate_result(
@@ -339,7 +374,7 @@ function export_intermediate_result(
     cellvalues,
     material_model,
     densities,
-    forces,
+    loads,
     boundary_conditions,
     acceleration_data,
     compliance,
@@ -374,7 +409,7 @@ function export_intermediate_result(
         )
     end
 
-    apply_forces_and_bcs!(K_temp, f_temp, forces, boundary_conditions)
+    apply_loads_and_bcs!(K_temp, f_temp, loads, boundary_conditions)
     u_temp = K_temp \ f_temp
 
     stress_field_temp, _, _ =
@@ -398,18 +433,6 @@ function export_intermediate_result(
         joinpath(export_path, "iter_$(lpad(iteration, 4, '0'))"),
         include_history = false,
     )
-end
-
-"""
-Helper function to apply forces and boundary conditions.
-"""
-function apply_forces_and_bcs!(K, f, forces, boundary_conditions)
-    for force in forces
-        apply_force!(f, force...)
-    end
-    for bc in boundary_conditions
-        apply!(K, f, bc)
-    end
 end
 
 """

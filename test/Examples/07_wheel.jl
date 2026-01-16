@@ -280,12 +280,25 @@ println("  Filter radius: $(opt_params.filter_radius)")
 # 10. PREPARE FORCES FOR OPTIMIZATION LOOP
 # -----------------------------------------------------------------------------
 # Approximation: average traction distributed to nodes
-forces_list = Tuple{DofHandler,Vector{Int},Vector{Float64}}[]
-for node_id in inner_nodes
-    coord = grid.nodes[node_id].x
-    node_traction = g(coord[1], coord[2], coord[3]) ./ length(inner_nodes)
-    push!(forces_list, (dh, [node_id], node_traction))
-end
+# forces_list = Tuple{DofHandler,Vector{Int},Vector{Float64}}[]
+# for node_id in inner_nodes
+#     coord = grid.nodes[node_id].x
+#     node_traction = g(coord[1], coord[2], coord[3]) ./ length(inner_nodes)
+#     push!(forces_list, (dh, [node_id], node_traction))
+# end
+
+# Tangential traction function: g(x,y,z) = 100*(-y, x, 0)
+traction_magnitude = 100.0
+g(x, y, z) = [traction_magnitude * (-y), traction_magnitude * x, 0.0]
+
+# Option 1: SurfaceTractionLoad (recommended - uses Gauss quadrature)
+traction_load = SurfaceTractionLoad(dh, grid, inner_nodes, g)
+
+# Option 2: NodalTractionLoad (simpler, less accurate)
+# traction_load = NodalTractionLoad(dh, grid, inner_nodes, g)
+
+# Load list for optimization
+loads = [traction_load]
 
 # -----------------------------------------------------------------------------
 # 11. RUN OPTIMIZATION
@@ -297,7 +310,8 @@ println("Fixed: $(length(fixed_nodes)) nodes on 5 arcs")
 println("Load: $(length(inner_nodes)) nodes on inner cylinder")
 println()
 
-results = simp_optimize(grid, dh, cellvalues, forces_list, [ch_fixed], opt_params)
+# results = simp_optimize(grid, dh, cellvalues, forces_list, [ch_fixed], opt_params)
+results = simp_optimize(grid, dh, cellvalues, loads, [ch_fixed], opt_params)
 
 # -----------------------------------------------------------------------------
 # 12. EXPORT FINAL RESULTS
