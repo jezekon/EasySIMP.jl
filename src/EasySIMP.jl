@@ -7,7 +7,8 @@ topology optimization based on Ferrite.jl finite element framework.
 
 Main features:
 - SIMP material interpolation with OC method
-- Density filtering for numerical stability
+- KD-tree accelerated density filtering (O(n log n) instead of O(n²))
+- Memory-optimized assembly with matrix reuse
 - Support for point loads, nodal traction, and surface traction
 - VTU export for ParaView visualization
 """
@@ -66,6 +67,9 @@ export OptimizationParameters, simp_optimize
 
 # Load condition types
 export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
+
+# Filter cache (for advanced users)
+export FilterCache, create_filter_cache
 
 # Post-processing
 export export_results_vtu, create_results_data, export_boundary_conditions
