@@ -263,8 +263,8 @@ println("Multiple loads + Symmetry + Body forces")
 println()
 
 forces_list = [
-    (dh, collect(leg_nodes), [0.0, 0.0, -13000.0]),      # Legs: 13 N
-    (dh, collect(camera_nodes), [0.0, 0.0, -500.0]),      # Camera: 0.5 N
+    PointLoad(dh, collect(leg_nodes), [0.0, 0.0, -13000.0]),      # Legs: 13 N
+    PointLoad(dh, collect(camera_nodes), [0.0, 0.0, -500.0]),      # Camera: 0.5 N
 ]
 
 results = simp_optimize(

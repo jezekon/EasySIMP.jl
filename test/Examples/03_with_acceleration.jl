@@ -175,7 +175,7 @@ results = simp_optimize(
     grid,
     dh,
     cellvalues,
-    [(dh, collect(force_nodes), [0.0, -1000.0, 0.0])],
+    [PointLoad(dh, collect(force_nodes), [0.0, -1000.0, 0.0])],
     [ch_sliding, ch_support],
     opt_params,
     acceleration_data,  # Add acceleration
