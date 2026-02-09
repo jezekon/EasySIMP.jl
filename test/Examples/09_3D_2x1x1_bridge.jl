@@ -58,7 +58,7 @@ println("  ✓ Generated: $(getncells(grid)) elements, $(getnnodes(grid)) nodes"
 # -----------------------------------------------------------------------------
 # 2. MATERIAL PROPERTIES
 # -----------------------------------------------------------------------------
-E0 = 200.0
+E0 = 1.0
 ν = 0.3
 material_model = create_simp_material_model(E0, ν, 1e-6, 3.0)
 
