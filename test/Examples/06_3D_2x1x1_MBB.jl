@@ -10,6 +10,7 @@
 # Boundary Conditions:
 #   - Symmetry: Left face (x=0) - U1=0 only
 #   - Support: Right bottom edge (x=2, y=0, all Z) - U2=0 only
+#   - Z-fix: Single node at load point to prevent rigid body motion in Z
 #
 # Loading:
 #   - Semicircle load: Center at (0, 1, 0.5), radius 0.1 mm
@@ -61,6 +62,21 @@ for node_id = 1:getnnodes(grid)
 end
 println("  ✓ Support nodes (Y-fixed): $(length(support_nodes))")
 
+# Z-constraint: Single node to prevent rigid body motion in Z
+z_fix_node = Set{Int}()
+target = [0.0, 1.0, 0.5]
+min_dist = Inf
+closest = 1
+for node_id = 1:getnnodes(grid)
+    dist = norm(grid.nodes[node_id].x - target)
+    if dist < min_dist
+        global min_dist = dist
+        global closest = node_id
+    end
+end
+push!(z_fix_node, closest)
+println("  ✓ Z-fix node: 1 (prevents rigid body motion)")
+
 # Force: Semicircle on top face
 force_center = [0.0, 1.0, 0.5]
 force_radius = 0.1 + eps()
@@ -91,13 +107,14 @@ assemble_stiffness_matrix_simp!(
 
 ch_symmetry = apply_sliding_boundary!(K, f, dh, symmetry_nodes, [1])
 ch_support = apply_sliding_boundary!(K, f, dh, support_nodes, [2])
+ch_z_fix = apply_sliding_boundary!(K, f, dh, z_fix_node, [3])
 
 apply_force!(f, dh, collect(force_nodes), [0.0, -1.0, 0.0])
 
 # -----------------------------------------------------------------------------
 # 5. OPTIMIZATION PARAMETERS
 # -----------------------------------------------------------------------------
-results_dir = "./results/06_3D_2x1x1_MBB_4tol_r2.0"
+results_dir = "./results/06_3D_2x1x1_MBB_01tol_r2.0"
 mkpath(results_dir)
 
 opt_params = OptimizationParameters(
@@ -107,14 +124,14 @@ opt_params = OptimizationParameters(
     p = 3.0,
     volume_fraction = 0.4,
     max_iterations = 2000,
-    tolerance = 0.04,
+    tolerance = 0.01,
     filter_radius = 2.0,
     move_limit = 0.2,
     damping = 0.5,
     use_cache = true,
-    export_interval = 20,
+    export_interval = 2000,
     export_path = results_dir,
-    task_name = "3D_MBB_Beam_2x1x1",  # Task name for logging
+    task_name = "3D_MBB_Beam_2x1x1",
 )
 
 println("\nOptimization parameters:")
@@ -129,7 +146,7 @@ println("  Filter radius: $(opt_params.filter_radius)")
 export_boundary_conditions(
     grid,
     dh,
-    union(symmetry_nodes, support_nodes),
+    union(symmetry_nodes, support_nodes, z_fix_node),
     force_nodes,
     joinpath(results_dir, "boundary_conditions"),
 )
@@ -144,7 +161,11 @@ results = simp_optimize(
     dh,
     cellvalues,
     [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
+<<<<<<< Updated upstream
     [ch_symmetry, ch_support],
+=======
+    [ch_symmetry, ch_support, ch_z_fix],
+>>>>>>> Stashed changes
     opt_params,
 )
 
