@@ -211,3 +211,6 @@ println("  • Load: Circular region r=0.1 at x=2.0 center, F=[0,0,-1]")
 println("\nResults Location:")
 println("  $results_dir/")
 println("="^80)
+
+# Single thread computation:
+# OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 julia -t 1 --project=. test/Examples/05_3D_2x1x1_4Legs.jl

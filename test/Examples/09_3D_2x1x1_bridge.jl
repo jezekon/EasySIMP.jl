@@ -193,3 +193,6 @@ println("  $(results_dir)/optimization_progress.csv  (iteration data)")
 println("  $(results_dir)/optimization_summary.txt   (final summary)")
 println("  $(results_dir)/final_results.vtu          (ParaView visualization)")
 println("="^80)
+
+# Single thread computation:
+# OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 julia -t 1 --project=. test/Examples/09_3D_2x1x1_bridge.jl
