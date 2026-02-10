@@ -1,12 +1,11 @@
 # =============================================================================
 # 3D MICHELL-TYPE BEAM - SIMP Topology Optimization
-# Single run with tolerance checkpoint export
+# BATCH RUN: Multiple tolerance values
 # =============================================================================
 #
 # Description:
 #   Michell-type beam problem with two simple supports on the bottom edges
-#   and a central point load. Demonstrates multi-tolerance checkpoint export
-#   from a single optimization run.
+#   and a central point load. Batch tolerance study.
 #
 # Problem Visualization (side view, XY plane at z=0.5):
 #
@@ -33,19 +32,33 @@
 #   - Symmetry plane ZY at x=1.0: U1=0 (prevents X-rotation rigid body mode)
 #   - Point load: Circular region at [1,0,0.5], radius 0.1 - F = [0, -1, 0] N
 #
-# Tolerance Checkpoints:
-#   Single run with tol=0.01, results exported when change first drops below:
-#   [0.16, 0.08, 0.04, 0.02, 0.01] → final_results_16tol.vtu, etc.
-#
 # =============================================================================
 
 using EasySIMP
 using Ferrite
 using LinearAlgebra
 using Printf
+using Dates
 
 # -----------------------------------------------------------------------------
-# 1. MESH GENERATION
+# TOLERANCE VALUES TO TEST
+# -----------------------------------------------------------------------------
+tolerance_values = [0.16, 0.08, 0.04, 0.02, 0.01]
+
+# Storage for results
+struct BatchResult
+    compliance::Float64
+    volume_fraction::Float64
+    iterations::Int
+    converged::Bool
+    elapsed_time::Float64
+    results_dir::String
+end
+
+all_results = Dict{Float64,BatchResult}()
+
+# -----------------------------------------------------------------------------
+# 1. MESH GENERATION (shared for all runs)
 # -----------------------------------------------------------------------------
 println("Generating mesh...")
 grid = generate_grid(Hexahedron, (40, 20, 20), Vec((0.0, 0.0, 0.0)), Vec((2.0, 1.0, 1.0)))
@@ -53,9 +66,6 @@ println("  ✓ Generated: $(getncells(grid)) elements, $(getnnodes(grid)) nodes"
 
 # Mesh parameters
 xmax, ymax, zmax = 2.0, 1.0, 1.0
-dx = xmax / 40  # 0.05
-dy = ymax / 20  # 0.05
-dz = zmax / 20  # 0.05
 
 # -----------------------------------------------------------------------------
 # 2. MATERIAL PROPERTIES
@@ -76,7 +86,7 @@ dh, cellvalues, K, f = setup_problem(grid)
 println("  ✓ DOFs: $(ndofs(dh))")
 
 # -----------------------------------------------------------------------------
-# 4. BOUNDARY CONDITIONS - TWO SIMPLE SUPPORTS ON BOTTOM EDGES
+# 4. BOUNDARY CONDITIONS
 # -----------------------------------------------------------------------------
 println("\nSelecting boundary condition nodes...")
 
@@ -84,7 +94,6 @@ println("\nSelecting boundary condition nodes...")
 support_left = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
-    x, y, z = coord[1], coord[2], coord[3]
     if abs(coord[2]) < eps() && coord[1] <= 0.05 + eps()
         push!(support_left, node_id)
     end
@@ -95,16 +104,12 @@ println("  ✓ Support left (x=0, y=0): $(length(support_left)) nodes")
 support_right = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
-    x, y, z = coord[1], coord[2], coord[3]
     if abs(coord[2]) < eps() && coord[1] >= 2.0 - 0.05 - eps()
         push!(support_right, node_id)
     end
 end
 println("  ✓ Support right (x=2, y=0): $(length(support_right)) nodes")
 
-# -----------------------------------------------------------------------------
-# 5. FORCE REGION AND SYMMETRY PLANES
-# -----------------------------------------------------------------------------
 # Force: Circular region on bottom face (y=0)
 force_center = [1.0, 0.0, 0.5]
 force_radius = 0.1 + eps()
@@ -123,145 +128,223 @@ for node_id = 1:getnnodes(grid)
 end
 println("  ✓ Force nodes (circle r=$(force_radius)): $(length(force_nodes))")
 
-# Symmetry plane XY at z = 0.5: U3 = 0 (problem is symmetric about mid-plane)
+# Symmetry plane XY at z = 0.5: U3 = 0
 symmetry_z_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.5], [0.0, 0.0, 1.0], 1e-6)
 println("  ✓ Symmetry plane z=0.5 (U3=0): $(length(symmetry_z_nodes)) nodes")
 
-# Symmetry plane ZY at x = 1.0: U1 = 0 (problem is symmetric about mid-span)
+# Symmetry plane ZY at x = 1.0: U1 = 0
 symmetry_x_nodes = select_nodes_by_plane(grid, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-6)
 println("  ✓ Symmetry plane x=1.0 (U1=0): $(length(symmetry_x_nodes)) nodes")
 
 # -----------------------------------------------------------------------------
-# 6. RESULTS DIRECTORY
+# 5. BATCH OPTIMIZATION LOOP
 # -----------------------------------------------------------------------------
-results_dir = "./results/07_michell_type"
-mkpath(results_dir)
+total_mesh_volume = calculate_volume(grid)
 
-# -----------------------------------------------------------------------------
-# 7. EXPORT BOUNDARY CONDITIONS FOR VISUALIZATION
-# -----------------------------------------------------------------------------
-all_support_nodes = union(support_left, support_right, symmetry_z_nodes, symmetry_x_nodes)
-
-export_boundary_conditions(
-    grid,
-    dh,
-    all_support_nodes,
-    force_nodes,
-    joinpath(results_dir, "boundary_conditions"),
-)
-println("  ✓ Saved: boundary_conditions.vtu")
-
-# -----------------------------------------------------------------------------
-# 8. APPLY BOUNDARY CONDITIONS AND FORCES
-# -----------------------------------------------------------------------------
-println("\nApplying boundary conditions...")
-
-assemble_stiffness_matrix_simp!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    fill(0.4, getncells(grid)),
-)
-
-# Simple supports: U2=0 on both bottom edges
-ch_support_left = apply_sliding_boundary!(K, f, dh, support_left, [2])
-ch_support_right = apply_sliding_boundary!(K, f, dh, support_right, [2])
-
-# Symmetry plane z=0.5: U3=0
-ch_symmetry_z = apply_sliding_boundary!(K, f, dh, symmetry_z_nodes, [3])
-
-# Symmetry plane x=1.0: U1=0
-ch_symmetry_x = apply_sliding_boundary!(K, f, dh, symmetry_x_nodes, [1])
-
-# Point load: F = [0, -1, 0] distributed on circular region
-apply_force!(f, dh, collect(force_nodes), [0.0, -1.0, 0.0])
-println("  ✓ Applied force: [0, -1, 0] N on $(length(force_nodes)) nodes")
-
-# -----------------------------------------------------------------------------
-# 9. OPTIMIZATION PARAMETERS
-# -----------------------------------------------------------------------------
-tolerance_values = [0.16, 0.08, 0.04, 0.02, 0.01]
-
-opt_params = OptimizationParameters(
-    E0 = E0,
-    Emin = 1e-9,
-    ν = ν,
-    p = 3.0,
-    volume_fraction = 0.4,
-    max_iterations = 3000,
-    tolerance = 0.01,
-    filter_radius = 2.0,
-    move_limit = 0.2,
-    damping = 0.5,
-    use_cache = true,
-    export_interval = 3000,
-    export_path = results_dir,
-    task_name = "3D_Michell_Type",
-    tolerance_checkpoints = tolerance_values,
-)
-
-println("\nOptimization parameters:")
-println("  Task name: $(opt_params.task_name)")
-println("  Target volume fraction: $(opt_params.volume_fraction)")
-println("  Max iterations: $(opt_params.max_iterations)")
-println("  Convergence tolerance: $(opt_params.tolerance)")
-println("  Filter radius: $(opt_params.filter_radius)")
-println("  Tolerance checkpoints: $(tolerance_values)")
-
-# -----------------------------------------------------------------------------
-# 10. RUN OPTIMIZATION
-# -----------------------------------------------------------------------------
-println("\n" * "="^80)
-println("STARTING 3D MICHELL-TYPE BEAM OPTIMIZATION")
-println("Single run with tolerance checkpoint export")
-println("="^80)
-
-results = simp_optimize(
-    grid,
-    dh,
-    cellvalues,
-    [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
-    [ch_support_left, ch_support_right, ch_symmetry_z, ch_symmetry_x],
-    opt_params,
-)
-
-# -----------------------------------------------------------------------------
-# 11. EXPORT FINAL RESULTS
-# -----------------------------------------------------------------------------
-println("\nExporting final results...")
-results_data = create_results_data(grid, dh, results)
-export_results_vtu(results_data, joinpath(results_dir, "final"))
-
-# -----------------------------------------------------------------------------
-# 12. SUMMARY
-# -----------------------------------------------------------------------------
-println("\n" * "="^80)
-println("OPTIMIZATION COMPLETED")
-println("="^80)
-println("\nFinal Results:")
-println("  Compliance: $(round(results.compliance, digits=6))")
-println("  Volume fraction: $(round(results.volume / calculate_volume(grid), digits=4))")
-println("  Iterations: $(results.iterations)")
-println("  Converged: $(results.converged)")
-
-println("\nProblem Setup:")
-println("  • Domain: 2.0 × 1.0 × 1.0")
-println("  • Support left: $(length(support_left)) nodes at x=0, y=0 (U2=0)")
-println("  • Support right: $(length(support_right)) nodes at x=2, y=0 (U2=0)")
-println("  • Force: [0, -1, 0] N on circular region (r=0.1) at [1, 0, 0.5]")
-println("  • Symmetry plane z=0.5: $(length(symmetry_z_nodes)) nodes (U3=0)")
-println("  • Symmetry plane x=1.0: $(length(symmetry_x_nodes)) nodes (U1=0)")
-
-println("\nTolerance Checkpoint Files:")
 for tol in tolerance_values
     tol_str = @sprintf("%02d", round(Int, tol * 100))
-    println("  $(results_dir)/final_results_$(tol_str)tol.vtu  (change < $(tol))")
+    results_dir = "./results/07_3D_2x1x1_Michell_$(tol_str)tol_r2.0"
+    mkpath(results_dir)
+
+    println("\n" * "="^80)
+    println("RUNNING: Tolerance = $tol  →  $results_dir")
+    println("="^80)
+
+    # Export boundary conditions (only for first run)
+    if tol == tolerance_values[1]
+        all_support_nodes =
+            union(support_left, support_right, symmetry_z_nodes, symmetry_x_nodes)
+        export_boundary_conditions(
+            grid,
+            dh,
+            all_support_nodes,
+            force_nodes,
+            joinpath(results_dir, "boundary_conditions"),
+        )
+        println("  ✓ Saved: boundary_conditions.vtu")
+    end
+
+    # Re-assemble and apply boundary conditions for each run
+    K_run = allocate_matrix(dh)
+    f_run = zeros(ndofs(dh))
+
+    assemble_stiffness_matrix_simp!(
+        K_run,
+        f_run,
+        dh,
+        cellvalues,
+        material_model,
+        fill(0.4, getncells(grid)),
+    )
+
+    ch_support_left = apply_sliding_boundary!(K_run, f_run, dh, support_left, [2])
+    ch_support_right = apply_sliding_boundary!(K_run, f_run, dh, support_right, [2])
+    ch_symmetry_z = apply_sliding_boundary!(K_run, f_run, dh, symmetry_z_nodes, [3])
+    ch_symmetry_x = apply_sliding_boundary!(K_run, f_run, dh, symmetry_x_nodes, [1])
+
+    apply_force!(f_run, dh, collect(force_nodes), [0.0, -1.0, 0.0])
+
+    # Optimization parameters
+    opt_params = OptimizationParameters(
+        E0 = E0,
+        Emin = 1e-9,
+        ν = ν,
+        p = 3.0,
+        volume_fraction = 0.4,
+        max_iterations = 3000,
+        tolerance = tol,
+        filter_radius = 2.0,
+        move_limit = 0.2,
+        damping = 0.5,
+        use_cache = true,
+        export_interval = 3000,
+        export_path = results_dir,
+        task_name = "3D_Michell_Type_$(tol_str)tol",
+    )
+
+    # Run optimization with timing
+    t_start = time()
+    results = simp_optimize(
+        grid,
+        dh,
+        cellvalues,
+        [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
+        [ch_support_left, ch_support_right, ch_symmetry_z, ch_symmetry_x],
+        opt_params,
+    )
+    elapsed = time() - t_start
+
+    # Export final results
+    results_data = create_results_data(grid, dh, results)
+    export_results_vtu(results_data, joinpath(results_dir, "final"))
+
+    vol_frac = results.volume / total_mesh_volume
+
+    # Store results
+    all_results[tol] = BatchResult(
+        results.compliance,
+        vol_frac,
+        results.iterations,
+        results.converged,
+        elapsed,
+        results_dir,
+    )
+
+    # Write per-tolerance summary txt file
+    summary_path = joinpath(results_dir, "optimization_summary.txt")
+    open(summary_path, "w") do io
+        println(io, "=" ^ 60)
+        println(io, "SIMP TOPOLOGY OPTIMIZATION SUMMARY")
+        println(io, "=" ^ 60)
+        println(io)
+        println(io, "Task name:           3D_Michell_Type_$(tol_str)tol")
+        println(io, "Tolerance:           $tol")
+        println(io, "Iterations:          $(results.iterations)")
+        println(io, "Total time:          $(round(elapsed, digits=2)) s")
+        println(io, "Converged:           $(results.converged ? "Yes" : "No")")
+        println(io)
+        println(io, "Final compliance:    $(results.compliance)")
+        println(io, "Final volume frac.:  $(round(vol_frac, digits=6))")
+        println(io, "Final volume:        $(results.volume)")
+        println(io)
+        println(io, "Generated:           $(Dates.format(now(), "yyyy-mm-dd HH:MM:SS"))")
+        println(io, "=" ^ 60)
+    end
+
+    println("  ✓ Summary saved: $summary_path")
+    @printf(
+        "  Result: C=%.6f, Vf=%.4f, Iter=%d, Time=%.1fs, Conv=%s\n",
+        results.compliance,
+        vol_frac,
+        results.iterations,
+        elapsed,
+        results.converged ? "Yes" : "No"
+    )
 end
 
-println("\nOutput files:")
-println("  $(results_dir)/optimization_progress.csv  (iteration data)")
-println("  $(results_dir)/optimization_summary.txt   (final summary)")
-println("  $(results_dir)/final_results.vtu          (ParaView visualization)")
+# -----------------------------------------------------------------------------
+# 6. FINAL SUMMARY
+# -----------------------------------------------------------------------------
+println("\n" * "="^80)
+println("BATCH OPTIMIZATION COMPLETED")
 println("="^80)
+println("\nSummary of all runs:")
+println("-"^90)
+@printf(
+    "%-10s | %-12s | %-12s | %-10s | %-10s | %-10s\n",
+    "Tolerance",
+    "Compliance",
+    "Vol.Frac",
+    "Iterations",
+    "Time [s]",
+    "Converged"
+)
+println("-"^90)
+for tol in sort(collect(keys(all_results)))
+    r = all_results[tol]
+    @printf(
+        "%-10.4f | %-12.6f | %-12.4f | %-10d | %-10.1f | %-10s\n",
+        tol,
+        r.compliance,
+        r.volume_fraction,
+        r.iterations,
+        r.elapsed_time,
+        r.converged ? "Yes" : "No"
+    )
+end
+println("-"^90)
+
+println("\nResults saved to:")
+for tol in sort(collect(keys(all_results)))
+    println("  $(all_results[tol].results_dir)/")
+end
+println("="^80)
+
+# Write global summary txt file
+global_summary_path = "./results/07_michell_type_batch_summary.txt"
+open(global_summary_path, "w") do io
+    println(io, "=" ^ 90)
+    println(io, "BATCH TOLERANCE STUDY - 3D MICHELL-TYPE BEAM")
+    println(io, "=" ^ 90)
+    println(io)
+    println(io, "Problem: 2.0 × 1.0 × 1.0, two simple supports, central point load")
+    println(io, "Mesh: $(getncells(grid)) elements, $(getnnodes(grid)) nodes")
+    println(io, "Material: E₀ = $E0, ν = $ν")
+    println(io, "Volume fraction: 0.4")
+    println(io, "Filter radius: 2.0")
+    println(io)
+    println(io, "-" ^ 90)
+    @printf(
+        io,
+        "%-10s | %-12s | %-12s | %-10s | %-10s | %-10s\n",
+        "Tolerance",
+        "Compliance",
+        "Vol.Frac",
+        "Iterations",
+        "Time [s]",
+        "Converged"
+    )
+    println(io, "-" ^ 90)
+    for tol in sort(collect(keys(all_results)))
+        r = all_results[tol]
+        @printf(
+            io,
+            "%-10.4f | %-12.6f | %-12.4f | %-10d | %-10.1f | %-10s\n",
+            tol,
+            r.compliance,
+            r.volume_fraction,
+            r.iterations,
+            r.elapsed_time,
+            r.converged ? "Yes" : "No"
+        )
+    end
+    println(io, "-" ^ 90)
+    println(io)
+    println(io, "Generated: $(Dates.format(now(), "yyyy-mm-dd HH:MM:SS"))")
+    println(io, "=" ^ 90)
+end
+println("\nGlobal summary: $global_summary_path")
+println("="^80)
+
+# Single thread computation:
+# OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 julia -t 1 --project=. test/Examples/07_3D_2x1x1_Michell_type_tol_study.jl
