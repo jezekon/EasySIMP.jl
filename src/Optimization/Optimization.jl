@@ -50,6 +50,7 @@ Parameters for SIMP topology optimization.
 - `export_interval`: Export results every N iterations (0 = disabled)
 - `export_path`: Directory for intermediate results
 - `task_name`: Name for logging
+- `tolerance_checkpoints`: List of tolerance values for intermediate export
 """
 mutable struct OptimizationParameters
     # Material properties
@@ -80,6 +81,9 @@ mutable struct OptimizationParameters
     # Task name for logging
     task_name::String
 
+    # Tolerance checkpoints for multi-tolerance export
+    tolerance_checkpoints::Vector{Float64}
+
     function OptimizationParameters(;
         E0 = 1.0,
         Emin = 1e-9,
@@ -95,6 +99,7 @@ mutable struct OptimizationParameters
         export_interval = 0,
         export_path = "",
         task_name = "SIMP_Optimization",
+        tolerance_checkpoints = Float64[],
     )
         new(
             E0,
@@ -111,6 +116,7 @@ mutable struct OptimizationParameters
             export_interval,
             export_path,
             task_name,
+            tolerance_checkpoints,
         )
     end
 end
@@ -238,6 +244,12 @@ function simp_optimize(
     compliance_history = Float64[]
     volume_history = Float64[]
 
+    # Tolerance checkpoint tracking
+    checkpoint_triggered = falses(length(params.tolerance_checkpoints))
+    if !isempty(params.tolerance_checkpoints)
+        print_info("Tolerance checkpoints enabled: $(params.tolerance_checkpoints)")
+    end
+
     # =========================================================================
     # MAIN OPTIMIZATION LOOP
     # =========================================================================
@@ -342,7 +354,50 @@ function simp_optimize(
             change
         )
 
-        # Export intermediate results
+        # -----------------------------------------------------------------
+        # CHECK TOLERANCE CHECKPOINTS
+        # -----------------------------------------------------------------
+        if !isempty(params.tolerance_checkpoints) && !isempty(params.export_path)
+            for (idx, cp) in enumerate(params.tolerance_checkpoints)
+                if !checkpoint_triggered[idx] && change < cp
+                    checkpoint_triggered[idx] = true
+                    tol_pct = round(Int, cp * 100)
+                    tol_str = @sprintf("%02d", tol_pct)
+
+                    print_info(
+                        "Tolerance checkpoint $(cp) reached at iteration $(iteration)",
+                    )
+
+                    # Calculate stresses for checkpoint export
+                    stress_cp, _, _ = calculate_stresses_simp(
+                        u,
+                        dh,
+                        cellvalues,
+                        material_model,
+                        densities,
+                    )
+                    cp_result = OptimizationResult(
+                        copy(densities),
+                        copy(u),
+                        stress_cp,
+                        compliance,
+                        current_volume,
+                        iteration,
+                        false,
+                        copy(compliance_history),
+                        copy(volume_history),
+                    )
+                    cp_results_data = create_results_data(grid, dh, cp_result)
+                    PostProcessing.export_main_results(
+                        cp_results_data,
+                        joinpath(params.export_path, "final_results_$(tol_str)tol"),
+                    )
+                    print_success("Checkpoint exported: final_results_$(tol_str)tol.vtu")
+                end
+            end
+        end
+
+        # Export intermediate results (periodic interval export)
         if params.export_interval > 0 && iteration % params.export_interval == 0
             if !isempty(params.export_path)
                 # Reuse existing K, f, u - no extra allocation
