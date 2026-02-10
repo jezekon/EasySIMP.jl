@@ -4,7 +4,7 @@
 # =============================================================================
 #
 # Description:
-#   Michell-type beam problem with two simple supports on the bottom edges
+#   Michell-type beam problem with four corner supports on the bottom face
 #   and a central point load. Batch tolerance study.
 #
 # Problem Visualization (side view, XY plane at z=0.5):
@@ -17,17 +17,18 @@
 #          |█         2.0 × 1.0 × 1.0                      █
 #          |█                                              █
 #       0  |████████████████████████████████████████████████
-#          △                    ↓ F                        △
-#          U2=0          circle r=0.1                      U2=0
-#          (x=0)      at [1,0,0.5], [0,-1,0]              (x=2)
+#          △△                   ↓ F                      △△
+#          U2=0          circle r=0.1                    U2=0
+#       (corners)     at [1,0,0.5], [0,-1,0]          (corners)
 #          └─────────────────────────────────────────────────→ X
 #          0                   1.0                        2.0
 #
 #        (Z dimension: 0 to 1.0, perpendicular to page)
+#        4 corner supports: 3×3 elements each at (x=0,z=0), (x=0,z=1),
+#                           (x=2,z=0), (x=2,z=1)
 #
 # Boundary Conditions:
-#   - Support 1: Bottom-left edge (x≈0, y=0, all z) - U2=0
-#   - Support 2: Bottom-right edge (x≈2, y=0, all z) - U2=0
+#   - Support: 4 corners on bottom face (y=0), 3×3 elements each - U2=0
 #   - Symmetry plane XY at z=0.5: U3=0 (prevents Z-rotation rigid body mode)
 #   - Symmetry plane ZY at x=1.0: U1=0 (prevents X-rotation rigid body mode)
 #   - Point load: Circular region at [1,0,0.5], radius 0.1 - F = [0, -1, 0] N
@@ -90,25 +91,41 @@ println("  ✓ DOFs: $(ndofs(dh))")
 # -----------------------------------------------------------------------------
 println("\nSelecting boundary condition nodes...")
 
-# Support 1: Bottom face (y=0), left edge (x<=0.05, all Z) - fixed in Y direction only
+# Support: 4 corner regions on bottom face (y=0), each 3×3 elements = 0.15×0.15
+# Corner size: 3 elements × 0.05 = 0.15
+corner_size = 0.15
+
+# Support left: 2 corners at x=0 (z=0 and z=zmax)
 support_left = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
-    if abs(coord[2]) < eps() && coord[1] <= 0.05 + eps()
-        push!(support_left, node_id)
+    if abs(coord[2]) < eps() && coord[1] <= corner_size + eps()
+        # Bottom-left corner (x≈0, z≈0)
+        in_corner1 = coord[3] <= corner_size + eps()
+        # Top-left corner (x≈0, z≈zmax)
+        in_corner2 = coord[3] >= zmax - corner_size - eps()
+        if in_corner1 || in_corner2
+            push!(support_left, node_id)
+        end
     end
 end
-println("  ✓ Support left (x=0, y=0): $(length(support_left)) nodes")
+println("  ✓ Support left (2 corners, 3×3 elem): $(length(support_left)) nodes")
 
-# Support 2: Bottom face (y=0), right edge (x≥1.95, all Z) - fixed in Y direction only
+# Support right: 2 corners at x=xmax (z=0 and z=zmax)
 support_right = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
-    if abs(coord[2]) < eps() && coord[1] >= 2.0 - 0.05 - eps()
-        push!(support_right, node_id)
+    if abs(coord[2]) < eps() && coord[1] >= xmax - corner_size - eps()
+        # Bottom-right corner (x≈xmax, z≈0)
+        in_corner1 = coord[3] <= corner_size + eps()
+        # Top-right corner (x≈xmax, z≈zmax)
+        in_corner2 = coord[3] >= zmax - corner_size - eps()
+        if in_corner1 || in_corner2
+            push!(support_right, node_id)
+        end
     end
 end
-println("  ✓ Support right (x=2, y=0): $(length(support_right)) nodes")
+println("  ✓ Support right (2 corners, 3×3 elem): $(length(support_right)) nodes")
 
 # Force: Circular region on bottom face (y=0)
 force_center = [1.0, 0.0, 0.5]
@@ -307,7 +324,10 @@ open(global_summary_path, "w") do io
     println(io, "BATCH TOLERANCE STUDY - 3D MICHELL-TYPE BEAM")
     println(io, "=" ^ 90)
     println(io)
-    println(io, "Problem: 2.0 × 1.0 × 1.0, two simple supports, central point load")
+    println(
+        io,
+        "Problem: 2.0 × 1.0 × 1.0, four corner supports (3×3 elem), central point load",
+    )
     println(io, "Mesh: $(getncells(grid)) elements, $(getnnodes(grid)) nodes")
     println(io, "Material: E₀ = $E0, ν = $ν")
     println(io, "Volume fraction: 0.4")
