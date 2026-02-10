@@ -109,8 +109,8 @@ println("  ✓ Support right [2,0,0] (4×4 elem): $(length(support_right)) nodes
 # 5. FORCE REGION AND SYMMETRY PLANES
 # -----------------------------------------------------------------------------
 # Force: Circular region on bottom face (y=0)
-force_center = [1.0, 0.0, 0.5]
-force_radius = 0.1 + eps()
+force_center = [1.0, 0.0, 1.0]
+force_radius = 0.2 + eps()
 
 force_nodes = Set{Int}()
 for node_id = 1:getnnodes(grid)
