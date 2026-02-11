@@ -30,8 +30,8 @@
 #
 # Boundary Conditions:
 #   - Support: 4 corners on bottom face (y=0), 3×3 elements each - U2=0
-#   - Symmetry plane XY at z=0.5: U3=0 (prevents Z-rotation rigid body mode)
-#   - Symmetry plane ZY at x=1.0: U1=0 (prevents X-rotation rigid body mode)
+#   - Local constraint at base near [0,0,0] (y=0, x<=0.15, z=0): U3=0
+#   - Local constraint at base near [0,0,0] (y=0, z<=0.15, x=0): U1=0
 #   - Point load: Circular region at [1,0,0.5], radius 0.1 - F = [0, -1, 0] N
 #
 # Tolerance Checkpoints:
@@ -119,7 +119,7 @@ end
 println("  ✓ Support right (2 corners, 3×3 elem): $(length(support_right)) nodes")
 
 # -----------------------------------------------------------------------------
-# 5. FORCE REGION AND SYMMETRY PLANES
+# 5. FORCE REGION AND LOCAL CONSTRAINTS
 # -----------------------------------------------------------------------------
 # Force: Circular region on bottom face (y=0)
 force_center = [1.0, 0.0, 0.5]
@@ -139,13 +139,27 @@ for node_id = 1:getnnodes(grid)
 end
 println("  ✓ Force nodes (circle r=$(force_radius)): $(length(force_nodes))")
 
-# Symmetry plane XY at z = 0.5: U3 = 0 (problem is symmetric about mid-plane)
-symmetry_z_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.5], [0.0, 0.0, 1.0], 1e-6)
-println("  ✓ Symmetry plane z=0.5 (U3=0): $(length(symmetry_z_nodes)) nodes")
+# Local constraint near origin: y=0, z=0, x in <0, 0.15> → U3=0
+local_z_nodes = Set{Int}()
+for node_id = 1:getnnodes(grid)
+    coord = grid.nodes[node_id].x
+    x, y, z = coord[1], coord[2], coord[3]
+    if abs(y) < eps() && x <= corner_size + eps() && abs(z) < eps()
+        push!(local_z_nodes, node_id)
+    end
+end
+println("  ✓ Local constraint z=0 edge (U3=0): $(length(local_z_nodes)) nodes")
 
-# Symmetry plane ZY at x = 1.0: U1 = 0 (problem is symmetric about mid-span)
-symmetry_x_nodes = select_nodes_by_plane(grid, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-6)
-println("  ✓ Symmetry plane x=1.0 (U1=0): $(length(symmetry_x_nodes)) nodes")
+# Local constraint near origin: y=0, x=0, z in <0, 0.15> → U1=0
+local_x_nodes = Set{Int}()
+for node_id = 1:getnnodes(grid)
+    coord = grid.nodes[node_id].x
+    x, y, z = coord[1], coord[2], coord[3]
+    if abs(y) < eps() && z <= corner_size + eps() && abs(x) < eps()
+        push!(local_x_nodes, node_id)
+    end
+end
+println("  ✓ Local constraint x=0 edge (U1=0): $(length(local_x_nodes)) nodes")
 
 # -----------------------------------------------------------------------------
 # 6. RESULTS DIRECTORY
@@ -156,7 +170,7 @@ mkpath(results_dir)
 # -----------------------------------------------------------------------------
 # 7. EXPORT BOUNDARY CONDITIONS FOR VISUALIZATION
 # -----------------------------------------------------------------------------
-all_support_nodes = union(support_left, support_right, symmetry_z_nodes, symmetry_x_nodes)
+all_support_nodes = union(support_left, support_right, local_z_nodes, local_x_nodes)
 
 export_boundary_conditions(
     grid,
@@ -185,11 +199,11 @@ assemble_stiffness_matrix_simp!(
 ch_support_left = apply_sliding_boundary!(K, f, dh, support_left, [2])
 ch_support_right = apply_sliding_boundary!(K, f, dh, support_right, [2])
 
-# Symmetry plane z=0.5: U3=0
-ch_symmetry_z = apply_sliding_boundary!(K, f, dh, symmetry_z_nodes, [3])
+# Local constraint z=0 edge: U3=0
+ch_local_z = apply_sliding_boundary!(K, f, dh, local_z_nodes, [3])
 
-# Symmetry plane x=1.0: U1=0
-ch_symmetry_x = apply_sliding_boundary!(K, f, dh, symmetry_x_nodes, [1])
+# Local constraint x=0 edge: U1=0
+ch_local_x = apply_sliding_boundary!(K, f, dh, local_x_nodes, [1])
 
 # Point load: F = [0, -1, 0] distributed on circular region
 apply_force!(f, dh, collect(force_nodes), [0.0, -1.0, 0.0])
@@ -239,7 +253,7 @@ results = simp_optimize(
     dh,
     cellvalues,
     [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
-    [ch_support_left, ch_support_right, ch_symmetry_z, ch_symmetry_x],
+    [ch_support_left, ch_support_right, ch_local_z, ch_local_x],
     opt_params,
 )
 
@@ -267,8 +281,12 @@ println("  • Domain: 2.0 × 1.0 × 1.0")
 println("  • Support left: $(length(support_left)) nodes, 2 corners at x=0 (U2=0)")
 println("  • Support right: $(length(support_right)) nodes, 2 corners at x=2 (U2=0)")
 println("  • Force: [0, -1, 0] N on circular region (r=0.1) at [1, 0, 0.5]")
-println("  • Symmetry plane z=0.5: $(length(symmetry_z_nodes)) nodes (U3=0)")
-println("  • Symmetry plane x=1.0: $(length(symmetry_x_nodes)) nodes (U1=0)")
+println(
+    "  • Symmetry plane z=0.5: REMOVED → local constraint z=0 edge: $(length(local_z_nodes)) nodes (U3=0)",
+)
+println(
+    "  • Symmetry plane x=1.0: REMOVED → local constraint x=0 edge: $(length(local_x_nodes)) nodes (U1=0)",
+)
 
 println("\nTolerance Checkpoint Files:")
 for tol in tolerance_values
