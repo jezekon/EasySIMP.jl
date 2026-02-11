@@ -29,8 +29,8 @@
 #
 # Boundary Conditions:
 #   - Support: 4 corners on bottom face (y=0), 3×3 elements each - U2=0
-#   - Symmetry plane XY at z=0.5: U3=0 (prevents Z-rotation rigid body mode)
-#   - Symmetry plane ZY at x=1.0: U1=0 (prevents X-rotation rigid body mode)
+#   - Local constraint at base near [0,0,0] (y=0, x<=0.15, z=0): U3=0
+#   - Local constraint at base near [0,0,0] (y=0, z<=0.15, x=0): U1=0
 #   - Point load: Circular region at [1,0,0.5], radius 0.1 - F = [0, -1, 0] N
 #
 # =============================================================================
@@ -145,13 +145,25 @@ for node_id = 1:getnnodes(grid)
 end
 println("  ✓ Force nodes (circle r=$(force_radius)): $(length(force_nodes))")
 
-# Symmetry plane XY at z = 0.5: U3 = 0
-symmetry_z_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.5], [0.0, 0.0, 1.0], 1e-6)
-println("  ✓ Symmetry plane z=0.5 (U3=0): $(length(symmetry_z_nodes)) nodes")
+# Local constraint near origin: y=0, z=0, x in <0, 0.15> → U3=0
+local_z_nodes = Set{Int}()
+for node_id = 1:getnnodes(grid)
+    coord = grid.nodes[node_id].x
+    if abs(coord[2]) < eps() && coord[1] <= corner_size + eps() && abs(coord[3]) < eps()
+        push!(local_z_nodes, node_id)
+    end
+end
+println("  ✓ Local constraint z=0 edge (U3=0): $(length(local_z_nodes)) nodes")
 
-# Symmetry plane ZY at x = 1.0: U1 = 0
-symmetry_x_nodes = select_nodes_by_plane(grid, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-6)
-println("  ✓ Symmetry plane x=1.0 (U1=0): $(length(symmetry_x_nodes)) nodes")
+# Local constraint near origin: y=0, x=0, z in <0, 0.15> → U1=0
+local_x_nodes = Set{Int}()
+for node_id = 1:getnnodes(grid)
+    coord = grid.nodes[node_id].x
+    if abs(coord[2]) < eps() && coord[3] <= corner_size + eps() && abs(coord[1]) < eps()
+        push!(local_x_nodes, node_id)
+    end
+end
+println("  ✓ Local constraint x=0 edge (U1=0): $(length(local_x_nodes)) nodes")
 
 # -----------------------------------------------------------------------------
 # 5. BATCH OPTIMIZATION LOOP
@@ -169,8 +181,7 @@ for tol in tolerance_values
 
     # Export boundary conditions (only for first run)
     if tol == tolerance_values[1]
-        all_support_nodes =
-            union(support_left, support_right, symmetry_z_nodes, symmetry_x_nodes)
+        all_support_nodes = union(support_left, support_right, local_z_nodes, local_x_nodes)
         export_boundary_conditions(
             grid,
             dh,
@@ -196,8 +207,8 @@ for tol in tolerance_values
 
     ch_support_left = apply_sliding_boundary!(K_run, f_run, dh, support_left, [2])
     ch_support_right = apply_sliding_boundary!(K_run, f_run, dh, support_right, [2])
-    ch_symmetry_z = apply_sliding_boundary!(K_run, f_run, dh, symmetry_z_nodes, [3])
-    ch_symmetry_x = apply_sliding_boundary!(K_run, f_run, dh, symmetry_x_nodes, [1])
+    ch_local_z = apply_sliding_boundary!(K_run, f_run, dh, local_z_nodes, [3])
+    ch_local_x = apply_sliding_boundary!(K_run, f_run, dh, local_x_nodes, [1])
 
     apply_force!(f_run, dh, collect(force_nodes), [0.0, -1.0, 0.0])
 
@@ -226,7 +237,7 @@ for tol in tolerance_values
         dh,
         cellvalues,
         [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
-        [ch_support_left, ch_support_right, ch_symmetry_z, ch_symmetry_x],
+        [ch_support_left, ch_support_right, ch_local_z, ch_local_x],
         opt_params,
     )
     elapsed = time() - t_start
