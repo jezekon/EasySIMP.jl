@@ -5,7 +5,7 @@
 #
 # Description:
 #   Michell-type beam problem using one symmetry plane in Z.
-#   Two corner supports on bottom face at z=0 side, symmetry at z=1.
+#   Two corner fixed supports on bottom face at z=0 side, symmetry at z=1.
 #   Batch tolerance study.
 #
 # Problem Visualization (side view, XY plane at z=0):
@@ -18,19 +18,18 @@
 #          |█         2.0 × 1.0 × 1.0                      █
 #          |█                                              █
 #       0  |████████████████████████████████████████████████
-#          △△                   ↓ F                      △△
-#          U2=0          circle r=0.1                    U2=0
+#          ▓▓                   ↓ F                      ▓▓
+#       U1=U2=U3=0      circle r=0.1               U1=U2=U3=0
 #       (4×4 elem)    at [1,0,0.5], [0,-1,0]          (4×4 elem)
 #          └─────────────────────────────────────────────────→ X
 #          0                   1.0                        2.0
 #
 #        (Z dimension: 0 to 1.0, symmetry at z=1.0)
-#        2 corner supports: 4×4 elements each at (x=0,z=0), (x=2,z=0)
+#        2 corner fixed supports: 4×4 elements each at (x=0,z=0), (x=2,z=0)
 #
 # Boundary Conditions:
-#   - Support: 2 corners on bottom face (y=0) at z=0 side, 4×4 elements each - U2=0
+#   - Fixed support: 2 corners on bottom face (y=0) at z=0 side, 4×4 elements each - U1=U2=U3=0
 #   - Symmetry plane XY at z=1.0: U3=0
-#   - Symmetry plane ZY at x=1.0: U1=0
 #   - Point load: Circular region at [1,0,0.5], radius 0.1 - F = [0, -1, 0] N
 #
 # =============================================================================
@@ -44,7 +43,7 @@ using Dates
 # -----------------------------------------------------------------------------
 # TOLERANCE VALUES TO TEST
 # -----------------------------------------------------------------------------
-tolerance_values = [0.16, 0.08, 0.04, 0.02, 0.01]
+tolerance_values = [0.16, 0.16, 0.08, 0.04, 0.02, 0.01]
 
 # Storage for results
 struct BatchResult
@@ -91,10 +90,10 @@ println("  ✓ DOFs: $(ndofs(dh))")
 # -----------------------------------------------------------------------------
 println("\nSelecting boundary condition nodes...")
 
-# Support: 2 corner regions on bottom face (y=0) at z=0 side, each 4×4 elements = 0.20×0.20
+# Fixed support: 2 corner regions on bottom face (y=0) at z=0 side, each 4×4 elements = 0.20×0.20
 corner_size = 0.20
 
-# Support at [0,0,0] corner (x≈0, z≈0)
+# Support at [0,0,0] corner (x≈0, z≈0) - fixed U1=U2=U3=0
 support_left = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
@@ -104,9 +103,9 @@ for node_id = 1:getnnodes(grid)
         push!(support_left, node_id)
     end
 end
-println("  ✓ Support left [0,0,0] (4×4 elem): $(length(support_left)) nodes")
+println("  ✓ Support left [0,0,0] (4×4 elem, fixed): $(length(support_left)) nodes")
 
-# Support at [2,0,0] corner (x≈xmax, z≈0)
+# Support at [2,0,0] corner (x≈xmax, z≈0) - fixed U1=U2=U3=0
 support_right = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
@@ -116,11 +115,11 @@ for node_id = 1:getnnodes(grid)
         push!(support_right, node_id)
     end
 end
-println("  ✓ Support right [2,0,0] (4×4 elem): $(length(support_right)) nodes")
+println("  ✓ Support right [2,0,0] (4×4 elem, fixed): $(length(support_right)) nodes")
 
 # Force: Circular region on bottom face (y=0)
 force_center = [1.0, 0.0, 1.0]
-force_radius = 0.2 + eps()
+force_radius = 0.1 + eps()
 
 force_nodes = Set{Int}()
 for node_id = 1:getnnodes(grid)
@@ -140,10 +139,6 @@ println("  ✓ Force nodes (circle r=$(force_radius)): $(length(force_nodes))")
 symmetry_z_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], 1e-6)
 println("  ✓ Symmetry plane z=1.0 (U3=0): $(length(symmetry_z_nodes)) nodes")
 
-# Symmetry plane ZY at x = 1.0: U1 = 0
-symmetry_x_nodes = select_nodes_by_plane(grid, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-6)
-println("  ✓ Symmetry plane x=1.0 (U1=0): $(length(symmetry_x_nodes)) nodes")
-
 # -----------------------------------------------------------------------------
 # 5. BATCH OPTIMIZATION LOOP
 # -----------------------------------------------------------------------------
@@ -160,8 +155,7 @@ for tol in tolerance_values
 
     # Export boundary conditions (only for first run)
     if tol == tolerance_values[1]
-        all_support_nodes =
-            union(support_left, support_right, symmetry_z_nodes, symmetry_x_nodes)
+        all_support_nodes = union(support_left, support_right, symmetry_z_nodes)
         export_boundary_conditions(
             grid,
             dh,
@@ -185,10 +179,9 @@ for tol in tolerance_values
         fill(0.4, getncells(grid)),
     )
 
-    ch_support_left = apply_sliding_boundary!(K_run, f_run, dh, support_left, [2])
-    ch_support_right = apply_sliding_boundary!(K_run, f_run, dh, support_right, [2])
+    ch_support_left = apply_fixed_boundary!(K_run, f_run, dh, support_left)
+    ch_support_right = apply_fixed_boundary!(K_run, f_run, dh, support_right)
     ch_symmetry_z = apply_sliding_boundary!(K_run, f_run, dh, symmetry_z_nodes, [3])
-    ch_symmetry_x = apply_sliding_boundary!(K_run, f_run, dh, symmetry_x_nodes, [1])
 
     apply_force!(f_run, dh, collect(force_nodes), [0.0, -1.0, 0.0])
 
@@ -217,7 +210,7 @@ for tol in tolerance_values
         dh,
         cellvalues,
         [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
-        [ch_support_left, ch_support_right, ch_symmetry_z, ch_symmetry_x],
+        [ch_support_left, ch_support_right, ch_symmetry_z],
         opt_params,
     )
     elapsed = time() - t_start
@@ -317,7 +310,7 @@ open(global_summary_path, "w") do io
     println(io)
     println(
         io,
-        "Problem: 2.0 × 1.0 × 1.0, two corner supports (4×4 elem) at z=0, symmetry z=1.0",
+        "Problem: 2.0 × 1.0 × 1.0, two corner fixed supports (4×4 elem) at z=0, symmetry z=1.0",
     )
     println(io, "Mesh: $(getncells(grid)) elements, $(getnnodes(grid)) nodes")
     println(io, "Material: E₀ = $E0, ν = $ν")
