@@ -17,8 +17,8 @@
 #          |█         2.0 × 1.0 × 1.0                      █
 #          |█                                              █
 #       0  |████████████████████████████████████████████████
-#          △△                   ↓ F                      △△
-#          U2=0          circle r=0.1                    U2=0
+#          ▓▓                   ↓ F                      ▓▓
+#       U1=U2=U3=0      circle r=0.1               U1=U2=U3=0
 #       (corners)     at [1,0,0.5], [0,-1,0]          (corners)
 #          └─────────────────────────────────────────────────→ X
 #          0                   1.0                        2.0
@@ -28,9 +28,7 @@
 #                           (x=2,z=0), (x=2,z=1)
 #
 # Boundary Conditions:
-#   - Support: 4 corners on bottom face (y=0), 3×3 elements each - U2=0
-#   - Local constraint at base near [0,0,0] (y=0, x<=0.15, z=0): U3=0
-#   - Local constraint at base near [0,0,0] (y=0, z<=0.15, x=0): U1=0
+#   - Fixed support: 4 corners on bottom face (y=0), 3×3 elements each - U1=U2=U3=0
 #   - Point load: Circular region at [1,0,0.5], radius 0.1 - F = [0, -1, 0] N
 #
 # =============================================================================
@@ -91,11 +89,11 @@ println("  ✓ DOFs: $(ndofs(dh))")
 # -----------------------------------------------------------------------------
 println("\nSelecting boundary condition nodes...")
 
-# Support: 4 corner regions on bottom face (y=0), each 3×3 elements = 0.15×0.15
+# Fixed support: 4 corner regions on bottom face (y=0), each 3×3 elements = 0.15×0.15
 # Corner size: 3 elements × 0.05 = 0.15
 corner_size = 0.15
 
-# Support left: 2 corners at x=0 (z=0 and z=zmax)
+# Support left: 2 corners at x=0 (z=0 and z=zmax) - fixed U1=U2=U3=0
 support_left = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
@@ -109,9 +107,9 @@ for node_id = 1:getnnodes(grid)
         end
     end
 end
-println("  ✓ Support left (2 corners, 3×3 elem): $(length(support_left)) nodes")
+println("  ✓ Support left (2 corners, 3×3 elem, fixed): $(length(support_left)) nodes")
 
-# Support right: 2 corners at x=xmax (z=0 and z=zmax)
+# Support right: 2 corners at x=xmax (z=0 and z=zmax) - fixed U1=U2=U3=0
 support_right = Set{Int}()
 for node_id = 1:getnnodes(grid)
     coord = grid.nodes[node_id].x
@@ -125,7 +123,7 @@ for node_id = 1:getnnodes(grid)
         end
     end
 end
-println("  ✓ Support right (2 corners, 3×3 elem): $(length(support_right)) nodes")
+println("  ✓ Support right (2 corners, 3×3 elem, fixed): $(length(support_right)) nodes")
 
 # Force: Circular region on bottom face (y=0)
 force_center = [1.0, 0.0, 0.5]
@@ -145,26 +143,6 @@ for node_id = 1:getnnodes(grid)
 end
 println("  ✓ Force nodes (circle r=$(force_radius)): $(length(force_nodes))")
 
-# Local constraint near origin: y=0, z=0, x in <0, 0.15> → U3=0
-local_z_nodes = Set{Int}()
-for node_id = 1:getnnodes(grid)
-    coord = grid.nodes[node_id].x
-    if abs(coord[2]) < eps() && coord[1] <= corner_size + eps() && abs(coord[3]) < eps()
-        push!(local_z_nodes, node_id)
-    end
-end
-println("  ✓ Local constraint z=0 edge (U3=0): $(length(local_z_nodes)) nodes")
-
-# Local constraint near origin: y=0, x=0, z in <0, 0.15> → U1=0
-local_x_nodes = Set{Int}()
-for node_id = 1:getnnodes(grid)
-    coord = grid.nodes[node_id].x
-    if abs(coord[2]) < eps() && coord[3] <= corner_size + eps() && abs(coord[1]) < eps()
-        push!(local_x_nodes, node_id)
-    end
-end
-println("  ✓ Local constraint x=0 edge (U1=0): $(length(local_x_nodes)) nodes")
-
 # -----------------------------------------------------------------------------
 # 5. BATCH OPTIMIZATION LOOP
 # -----------------------------------------------------------------------------
@@ -181,7 +159,7 @@ for tol in tolerance_values
 
     # Export boundary conditions (only for first run)
     if tol == tolerance_values[1]
-        all_support_nodes = union(support_left, support_right, local_z_nodes, local_x_nodes)
+        all_support_nodes = union(support_left, support_right)
         export_boundary_conditions(
             grid,
             dh,
@@ -205,10 +183,8 @@ for tol in tolerance_values
         fill(0.4, getncells(grid)),
     )
 
-    ch_support_left = apply_sliding_boundary!(K_run, f_run, dh, support_left, [2])
-    ch_support_right = apply_sliding_boundary!(K_run, f_run, dh, support_right, [2])
-    ch_local_z = apply_sliding_boundary!(K_run, f_run, dh, local_z_nodes, [3])
-    ch_local_x = apply_sliding_boundary!(K_run, f_run, dh, local_x_nodes, [1])
+    ch_support_left = apply_fixed_boundary!(K_run, f_run, dh, support_left)
+    ch_support_right = apply_fixed_boundary!(K_run, f_run, dh, support_right)
 
     apply_force!(f_run, dh, collect(force_nodes), [0.0, -1.0, 0.0])
 
@@ -237,7 +213,7 @@ for tol in tolerance_values
         dh,
         cellvalues,
         [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
-        [ch_support_left, ch_support_right, ch_local_z, ch_local_x],
+        [ch_support_left, ch_support_right],
         opt_params,
     )
     elapsed = time() - t_start
@@ -337,7 +313,7 @@ open(global_summary_path, "w") do io
     println(io)
     println(
         io,
-        "Problem: 2.0 × 1.0 × 1.0, four corner supports (3×3 elem), central point load",
+        "Problem: 2.0 × 1.0 × 1.0, four corner fixed supports (3×3 elem), central point load",
     )
     println(io, "Mesh: $(getncells(grid)) elements, $(getnnodes(grid)) nodes")
     println(io, "Material: E₀ = $E0, ν = $ν")
