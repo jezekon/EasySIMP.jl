@@ -65,8 +65,8 @@ function export_results_vtu(
     include_history::Bool = false,
 )
     print_info("Exporting results to VTU format...")
-    export_main_results(results_data, filename_base * "_results")
-    print_success("VTU export completed: $(filename_base)_results.vtu")
+    export_main_results(results_data, filename_base)
+    print_success("VTU export completed: $(filename_base).vtu")
 end
 
 """

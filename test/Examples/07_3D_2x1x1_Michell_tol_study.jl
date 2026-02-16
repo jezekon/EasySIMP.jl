@@ -359,4 +359,4 @@ println("\nGlobal summary: $global_summary_path")
 println("="^80)
 
 # Single thread computation:
-# OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 julia -t 1 --project=. test/Examples/07_3D_2x1x1_Michell_type_tol_study.jl
+# OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 julia -t 1 --project=. test/Examples/07_3D_2x1x1_Michell_tol_study.jl
