@@ -42,7 +42,9 @@ using Dates
 # -----------------------------------------------------------------------------
 # TOLERANCE VALUES TO TEST
 # -----------------------------------------------------------------------------
-tolerance_values = [0.16, 0.08, 0.04, 0.02, 0.01]
+# First run triggers JIT compilation and is slower - duplicate 0.16 ensures
+# the second run (and all subsequent) give consistent timing results.
+tolerance_values = [0.16, 0.16, 0.08, 0.04, 0.02, 0.01]
 
 # Storage for results
 struct BatchResult
@@ -220,7 +222,10 @@ for tol in tolerance_values
 
     # Export final results
     results_data = create_results_data(grid, dh, results)
-    export_results_vtu(results_data, joinpath(results_dir, "final"))
+    export_results_vtu(
+        results_data,
+        joinpath(results_dir, "3D_2x1x1_Michell_$(tol_str)tol_r2.0-SIMP"),
+    )
 
     vol_frac = results.volume / total_mesh_volume
 

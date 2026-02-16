@@ -43,6 +43,8 @@ using Dates
 # -----------------------------------------------------------------------------
 # TOLERANCE VALUES TO TEST
 # -----------------------------------------------------------------------------
+# First run triggers JIT compilation and is slower - duplicate 0.16 ensures
+# the second run (and all subsequent) give consistent timing results.
 tolerance_values = [0.16, 0.16, 0.08, 0.04, 0.02, 0.01]
 
 # Storage for results
