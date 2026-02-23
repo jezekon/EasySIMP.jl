@@ -19,7 +19,7 @@
 #   - Body force: 6 m/s² acceleration in Y direction
 #
 # Optimization Goal:
-#   - Minimize compliance under multiple loads and acceleration
+#   - Minimize energy under multiple loads and acceleration
 #   - Target volume fraction: 30%
 #   - Material: Polymer (E = 2.4 GPa, ρ = 1.04 g/cm³)
 #
@@ -291,7 +291,7 @@ println("\n" * "="^80)
 println("OPTIMIZATION COMPLETED")
 println("="^80)
 println("\nFinal Results:")
-println("  Compliance: $(round(results.compliance, digits=4))")
+println("  Energy: $(round(results.energy, digits=4))")
 println("  Volume fraction: $(round(results.volume / calculate_volume(grid), digits=4))")
 println("  Iterations: $(results.iterations)")
 println("  Converged: $(results.converged)")

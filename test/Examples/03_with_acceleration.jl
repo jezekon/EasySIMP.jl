@@ -36,7 +36,7 @@
 #                 Acts on entire volume, scales with local density
 #
 # Optimization Goal:
-#   - Minimize compliance under combined point and body forces
+#   - Minimize energy under combined point and body forces
 #   - Target volume fraction: 40%
 #
 # =============================================================================
@@ -191,7 +191,7 @@ export_results_vtu(results_data, joinpath(results_dir, "final"))
 println("\n" * "="^80)
 println("OPTIMIZATION COMPLETED")
 println("="^80)
-println("Final compliance: $(results.compliance)")
+println("Final energy: $(results.energy)")
 println("Final volume fraction: $(results.volume / calculate_volume(grid))")
 println("Iterations: $(results.iterations)")
 println("Converged: $(results.converged)")

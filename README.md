@@ -11,7 +11,7 @@ EasySIMP is a Julia package for topology optimization using the Solid Isotropic 
 - **SIMP Optimization**: Classic topology optimization with penalization parameter control and density filtering
 - **Mesh Support**: Linear hexahedral and tetrahedral elements; supports VTU import and simple hexahedral mesh generation
 - **Boundary Conditions**: Fixed supports, sliding planes, distributed forces, surface traction, and body forces
-- **Progress Monitoring**: Real-time optimization progress with compliance and volume tracking
+- **Progress Monitoring**: Real-time optimization progress with energy and volume tracking
 - **ParaView Export**: VTU output with density field, displacement, and stress
 
 ## Installation

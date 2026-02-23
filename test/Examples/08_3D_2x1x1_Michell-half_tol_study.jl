@@ -49,7 +49,7 @@ tolerance_values = [0.16, 0.16, 0.08, 0.04, 0.02, 0.01]
 
 # Storage for results
 struct BatchResult
-    compliance::Float64
+    energy::Float64
     volume_fraction::Float64
     iterations::Int
     converged::Bool
@@ -225,7 +225,7 @@ for tol in tolerance_values
 
     # Store results
     all_results[tol] = BatchResult(
-        results.compliance,
+        results.energy,
         vol_frac,
         results.iterations,
         results.converged,
@@ -246,7 +246,7 @@ for tol in tolerance_values
         println(io, "Total time:          $(round(elapsed, digits=2)) s")
         println(io, "Converged:           $(results.converged ? "Yes" : "No")")
         println(io)
-        println(io, "Final compliance:    $(results.compliance)")
+        println(io, "Final energy:    $(results.energy)")
         println(io, "Final volume frac.:  $(round(vol_frac, digits=6))")
         println(io, "Final volume:        $(results.volume)")
         println(io)
@@ -257,7 +257,7 @@ for tol in tolerance_values
     println("  ✓ Summary saved: $summary_path")
     @printf(
         "  Result: C=%.6f, Vf=%.4f, Iter=%d, Time=%.1fs, Conv=%s\n",
-        results.compliance,
+        results.energy,
         vol_frac,
         results.iterations,
         elapsed,
@@ -276,7 +276,7 @@ println("-"^90)
 @printf(
     "%-10s | %-12s | %-12s | %-10s | %-10s | %-10s\n",
     "Tolerance",
-    "Compliance",
+    "Energy",
     "Vol.Frac",
     "Iterations",
     "Time [s]",
@@ -288,7 +288,7 @@ for tol in sort(collect(keys(all_results)))
     @printf(
         "%-10.4f | %-12.6f | %-12.4f | %-10d | %-10.1f | %-10s\n",
         tol,
-        r.compliance,
+        r.energy,
         r.volume_fraction,
         r.iterations,
         r.elapsed_time,
@@ -324,7 +324,7 @@ open(global_summary_path, "w") do io
         io,
         "%-10s | %-12s | %-12s | %-10s | %-10s | %-10s\n",
         "Tolerance",
-        "Compliance",
+        "Energy",
         "Vol.Frac",
         "Iterations",
         "Time [s]",
@@ -337,7 +337,7 @@ open(global_summary_path, "w") do io
             io,
             "%-10.4f | %-12.6f | %-12.4f | %-10d | %-10.1f | %-10s\n",
             tol,
-            r.compliance,
+            r.energy,
             r.volume_fraction,
             r.iterations,
             r.elapsed_time,

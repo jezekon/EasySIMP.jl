@@ -29,7 +29,7 @@
 #   - Point load: Right end (x=60, y=0, z=2) - F = [0, -1, 0] N
 #
 # Optimization Goal:
-#   - Minimize compliance (maximize stiffness)
+#   - Minimize energy (maximize stiffness)
 #   - Target volume fraction: 40%
 #   - Material will be removed from low-stress regions
 #
@@ -152,7 +152,7 @@ export_results_vtu(results_data, joinpath(results_dir, "final"))
 println("\n" * "="^80)
 println("OPTIMIZATION COMPLETED")
 println("="^80)
-println("Final compliance: $(results.compliance)")
+println("Final energy: $(results.energy)")
 println("Final volume fraction: $(results.volume / calculate_volume(grid))")
 println("Iterations: $(results.iterations)")
 println("Converged: $(results.converged)")
