@@ -9,7 +9,7 @@ using Ferrite
 using LinearAlgebra
 using ..FiniteElementAnalysis: compute_lame_parameters
 
-export calculate_sensitivities, calculate_sensitivities!, calculate_compliance_sensitivity
+export calculate_sensitivities, calculate_sensitivities!, calculate_energy_sensitivity
 
 """
     calculate_sensitivities!(sensitivities, grid, dh, cellvalues, densities, u, E0, Emin, ν, p)
@@ -43,7 +43,7 @@ function calculate_sensitivities!(
     # Lamé parameters for unit Young's modulus
     λ0 = ν / ((1 + ν) * (1 - 2ν))
     μ0 = 1.0 / (2 * (1 + ν))
-    
+
     n_basefuncs = getnbasefunctions(cellvalues)
     ke_unit = zeros(n_basefuncs, n_basefuncs)
 
@@ -51,10 +51,10 @@ function calculate_sensitivities!(
         cell_id = cellid(cell)
         density = densities[cell_id]
         cell_dofs = celldofs(cell)
-        
+
         reinit!(cellvalues, cell)
         fill!(ke_unit, 0.0)
-        
+
         # Compute unit stiffness matrix
         for q_point = 1:getnquadpoints(cellvalues)
             dΩ = getdetJdV(cellvalues, q_point)
@@ -73,7 +73,7 @@ function calculate_sensitivities!(
         # Derivative of Young's modulus w.r.t. density
         dE_drho = p * density^(p-1) * (E0 - Emin)
 
-        # Compliance sensitivity: ∂c/∂ρ = -∂E/∂ρ * u^T * k_unit * u
+        # Energy sensitivity: ∂c/∂ρ = -∂E/∂ρ * u^T * k_unit * u
         u_elem = @view u[cell_dofs]
         sensitivities[cell_id] = -dE_drho * dot(u_elem, ke_unit * u_elem)
     end
@@ -99,7 +99,7 @@ Calculate sensitivities (allocating version for backward compatibility).
 - Vector of sensitivities ∂c/∂ρe for each element
 
 # Theory
-For compliance minimization:
+For energy minimization:
 ∂c/∂ρe = -p * ρe^(p-1) * (E0 - Emin) * ue^T * k0 * ue
 
 where:
@@ -121,14 +121,25 @@ function calculate_sensitivities(
 )
     n_cells = getncells(grid)
     sensitivities = zeros(n_cells)
-    calculate_sensitivities!(sensitivities, grid, dh, cellvalues, densities, u, E0, Emin, ν, p)
+    calculate_sensitivities!(
+        sensitivities,
+        grid,
+        dh,
+        cellvalues,
+        densities,
+        u,
+        E0,
+        Emin,
+        ν,
+        p,
+    )
     return sensitivities
 end
 
 """
-    calculate_compliance_sensitivity(cell, cellvalues, density, u_element, E0, Emin, ν, p)
+    calculate_energy_sensitivity(cell, cellvalues, density, u_element, E0, Emin, ν, p)
 
-Calculate compliance sensitivity for a single element using SIMP parameters.
+Calculate energy sensitivity for a single element using SIMP parameters.
 
 # Arguments
 - `cell`: Current cell iterator
@@ -141,9 +152,9 @@ Calculate compliance sensitivity for a single element using SIMP parameters.
 - `p`: Penalization power
 
 # Returns
-- Compliance sensitivity ∂c/∂ρe for this element
+- Energy sensitivity ∂c/∂ρe for this element
 """
-function calculate_compliance_sensitivity(
+function calculate_energy_sensitivity(
     cell,
     cellvalues,
     density::Float64,
@@ -181,7 +192,7 @@ function calculate_compliance_sensitivity(
     # Derivative of Young's modulus w.r.t. density
     dE_drho = p * density^(p-1) * (E0 - Emin)
 
-    # Compliance sensitivity: ∂c/∂ρ = -∂E/∂ρ * u^T * k_unit * u
+    # Energy sensitivity: ∂c/∂ρ = -∂E/∂ρ * u^T * k_unit * u
     sensitivity = -dE_drho * dot(u_element, ke_unit * u_element)
 
     return sensitivity

@@ -21,11 +21,11 @@ struct ResultsData
     displacements::Vector{Float64}
     von_mises_stress::Vector{Float64}
     stress_tensors::Dict
-    compliance::Float64
+    energy::Float64
     volume_fraction::Float64
     iterations::Int
     converged::Bool
-    compliance_history::Vector{Float64}
+    energy_history::Vector{Float64}
     volume_history::Vector{Float64}
 end
 
@@ -44,11 +44,11 @@ function create_results_data(grid::Grid, dh::DofHandler, opt_result)
         opt_result.displacements,
         von_mises,
         opt_result.stresses,
-        opt_result.compliance,
+        opt_result.energy,
         opt_result.volume / calculate_volume(grid),
         opt_result.iterations,
         opt_result.converged,
-        opt_result.compliance_history,
+        opt_result.energy_history,
         opt_result.volume_history,
     )
 end
@@ -93,8 +93,8 @@ function export_main_results(results_data::ResultsData, filename::String)
         vtk["density"] = results_data.densities
         vtk["von_mises_stress"] = results_data.von_mises_stress
 
-        element_compliance = calculate_element_compliance(results_data)
-        vtk["element_compliance"] = element_compliance
+        element_energy = calculate_element_energy(results_data)
+        vtk["element_energy"] = element_energy
 
         nodal_displacements = extract_nodal_displacements(results_data)
         vtk["displacement"] = nodal_displacements
@@ -103,7 +103,7 @@ function export_main_results(results_data::ResultsData, filename::String)
             [norm(nodal_displacements[:, i]) for i = 1:size(nodal_displacements, 2)]
         vtk["displacement_magnitude"] = displacement_magnitude
 
-        vtk["compliance", VTKFieldData()] = results_data.compliance
+        vtk["energy", VTKFieldData()] = results_data.energy
         vtk["volume_fraction", VTKFieldData()] = results_data.volume_fraction
         vtk["iterations", VTKFieldData()] = results_data.iterations
         vtk["converged", VTKFieldData()] = results_data.converged ? 1 : 0
@@ -162,22 +162,22 @@ function extract_nodal_displacements(results_data::ResultsData)
 end
 
 """
-    calculate_element_compliance(results_data)
+    calculate_element_energy(results_data)
 
-Calculate compliance contribution from each element.
+Calculate energy contribution from each element.
 """
-function calculate_element_compliance(results_data::ResultsData)
+function calculate_element_energy(results_data::ResultsData)
     n_cells = getncells(results_data.grid)
-    element_compliance = zeros(n_cells)
+    element_energy = zeros(n_cells)
 
     total_volume = sum(results_data.densities)
 
     for i = 1:n_cells
-        element_compliance[i] =
+        element_energy[i] =
             results_data.densities[i] * results_data.von_mises_stress[i] / total_volume
     end
 
-    return element_compliance
+    return element_energy
 end
 
 """

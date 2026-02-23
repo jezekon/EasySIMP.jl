@@ -94,13 +94,13 @@ using EasySIMP.Utils
                 grid,
                 dh,
                 cellvalues,
-                [(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
+                [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
                 [ch_fixed],
                 opt_params,
             )
 
             print_success("Optimization completed!")
-            print_data("Final compliance: $(results.compliance)")
+            print_data("Final energy: $(results.energy)")
             print_data("Iterations: $(results.iterations)")
 
             # Export results
@@ -223,7 +223,7 @@ using EasySIMP.Utils
             )
 
             print_success("Optimization completed!")
-            print_data("Final compliance: $(results.compliance)")
+            print_data("Final energy: $(results.energy)")
             print_data("Iterations: $(results.iterations)")
 
             # Export results
@@ -317,7 +317,7 @@ using EasySIMP.Utils
             )
 
             print_success("Optimization with acceleration completed!")
-            print_data("Final compliance: $(results.compliance)")
+            print_data("Final energy: $(results.energy)")
             print_data("Iterations: $(results.iterations)")
 
             # Export results
@@ -365,16 +365,16 @@ using EasySIMP.Utils
 
             # Load points
             # 1. Legs: plane XY at z = -90
-            nozicky_nodes =
+            legs_nodes =
                 select_nodes_by_plane(grid, [0.0, 0.0, -90.0], [0.0, 0.0, 1.0], 1.0)
 
             # 2. Camera: circular region on plane XY at z = 5, radius = 21.5
-            kamera_nodes =
+            camera_nodes =
                 select_nodes_by_circle(grid, [0.0, 0.0, 5.0], [0.0, 0.0, 1.0], 21.5, 1e-3)
 
             # Export boundary conditions for visualization
             print_info("Exporting boundary conditions for ParaView inspection...")
-            all_force_nodes = union(nozicky_nodes, kamera_nodes)
+            all_force_nodes = union(legs_nodes, camera_nodes)
             all_constraint_nodes = union(fixed_nodes, symmetry_nodes)
             export_boundary_conditions(
                 grid,
@@ -416,19 +416,19 @@ using EasySIMP.Utils
                 )
             end
 
-            if isempty(nozicky_nodes)
+            if isempty(legs_nodes)
                 print_warning("No leg nodes found, finding nodes near z = -90")
-                nozicky_nodes = Set{Int}()
+                legs_nodes = Set{Int}()
                 for node_id = 1:getnnodes(grid)
                     node_coord = grid.nodes[node_id].x
                     if length(node_coord) >= 3 && abs(node_coord[3] - (-90.0)) < 5.0
-                        push!(nozicky_nodes, node_id)
+                        push!(legs_nodes, node_id)
                     end
                 end
-                print_info("Found $(length(nozicky_nodes)) nodes near z = -90 for legs")
+                print_info("Found $(length(legs_nodes)) nodes near z = -90 for legs")
             end
 
-            if isempty(kamera_nodes)
+            if isempty(camera_nodes)
                 print_warning("No camera nodes found, finding nodes near [0, 0, 5]")
                 target_point = [0.0, 0.0, 5.0]
                 min_dist = Inf
@@ -441,7 +441,7 @@ using EasySIMP.Utils
                         closest_node = node_id
                     end
                 end
-                kamera_nodes = Set([closest_node])
+                camera_nodes = Set([closest_node])
                 print_info("Using closest node $(closest_node) for camera")
             end
 
@@ -467,15 +467,13 @@ using EasySIMP.Utils
 
             # Apply forces
             # Legs: F = π*(14²-7.5²)*3*0.00985 ≈ 13 N downward
-            apply_force!(f, dh, collect(nozicky_nodes), [0.0, 0.0, -13000.0]) # mN
-            print_info(
-                "Applied 13N downward force to legs ($(length(nozicky_nodes)) nodes)",
-            )
+            apply_force!(f, dh, collect(legs_nodes), [0.0, 0.0, -13000.0]) # mN
+            print_info("Applied 13N downward force to legs ($(length(legs_nodes)) nodes)")
 
             # Camera: F = π*(21.5²-17²)*0.001852*0.5 ≈ 0.5 N downward
-            apply_force!(f, dh, collect(kamera_nodes), [0.0, 0.0, -500.0]) # mN
+            apply_force!(f, dh, collect(camera_nodes), [0.0, 0.0, -500.0]) # mN
             print_info(
-                "Applied 0.5N downward force to camera ($(length(kamera_nodes)) nodes)",
+                "Applied 0.5N downward force to camera ($(length(camera_nodes)) nodes)",
             )
 
             # Acceleration: 6 m/s² in Y direction
@@ -507,8 +505,8 @@ using EasySIMP.Utils
 
             # Run optimization with multiple forces
             forces_list = [
-                (dh, collect(nozicky_nodes), [0.0, 0.0, -13000.0]), # mN
-                (dh, collect(kamera_nodes), [0.0, 0.0, -500.0]), # mN
+                PointLoad(dh, collect(legs_nodes), [0.0, 0.0, -13000.0]),
+                PointLoad(dh, collect(camera_nodes), [0.0, 0.0, -500.0]),
             ]
 
             results = simp_optimize(
@@ -522,7 +520,7 @@ using EasySIMP.Utils
             )
 
             print_success("Gripper optimization completed!")
-            print_data("Final compliance: $(results.compliance)")
+            print_data("Final energy: $(results.energy)")
             print_data("Final volume fraction: $(results.volume / calculate_volume(grid))")
             print_data("Iterations: $(results.iterations)")
             print_data("Converged: $(results.converged)")

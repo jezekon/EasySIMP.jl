@@ -23,21 +23,21 @@ mutable struct OptimizationLogger
         # Create CSV file with header
         csv_path = joinpath(export_path, "optimization_progress.csv")
         csv_file = open(csv_path, "w")
-        println(csv_file, "Iteration,Compliance,VolumeFraction,MaxDensityChange")
+        println(csv_file, "Iteration,Energy,VolumeFraction,MaxDensityChange")
 
         new(csv_file, task_name, time(), export_path, 0)
     end
 end
 
 """
-    log_iteration!(logger, iteration, compliance, volume_fraction, max_change)
+    log_iteration!(logger, iteration, energy, volume_fraction, max_change)
 
 Log a single iteration to the CSV file.
 """
 function log_iteration!(
     logger::OptimizationLogger,
     iteration::Int,
-    compliance::Float64,
+    energy::Float64,
     volume_fraction::Float64,
     max_change::Float64,
 )
@@ -45,7 +45,7 @@ function log_iteration!(
         logger.csv_file,
         "%d,%.6e,%.6f,%.6e\n",
         iteration,
-        compliance,
+        energy,
         volume_fraction,
         max_change
     )
@@ -54,13 +54,13 @@ function log_iteration!(
 end
 
 """
-    write_summary(logger, final_compliance, final_volume, converged)
+    write_summary(logger, final_energy, final_volume, converged)
 
 Write final summary file after optimization completes.
 """
 function write_summary(
     logger::OptimizationLogger,
-    final_compliance::Float64,
+    final_energy::Float64,
     final_volume::Float64,
     converged::Bool,
 )
@@ -77,7 +77,7 @@ function write_summary(
         println(io, "Total time:          $(round(total_time, digits=2)) s")
         println(io, "Converged:           $(converged ? "Yes" : "No")")
         println(io)
-        println(io, "Final compliance:    $(final_compliance)")
+        println(io, "Final energy:    $(final_energy)")
         println(io, "Final volume:        $(final_volume)")
         println(io)
         println(io, "Generated:           $(Dates.format(now(), "yyyy-mm-dd HH:MM:SS"))")

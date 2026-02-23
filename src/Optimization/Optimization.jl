@@ -134,22 +134,22 @@ Results from SIMP topology optimization.
 - `densities`: Final density distribution
 - `displacements`: Final displacement vector
 - `stresses`: Stress field (Dict of stress tensors)
-- `compliance`: Final compliance value
+- `energy`: Final energy value
 - `volume`: Final volume
 - `iterations`: Number of iterations performed
 - `converged`: Whether optimization converged
-- `compliance_history`: Compliance at each iteration
+- `energy_history`: Energy at each iteration
 - `volume_history`: Volume at each iteration
 """
 struct OptimizationResult
     densities::Vector{Float64}
     displacements::Vector{Float64}
     stresses::Dict
-    compliance::Float64
+    energy::Float64
     volume::Float64
     iterations::Int
     converged::Bool
-    compliance_history::Vector{Float64}
+    energy_history::Vector{Float64}
     volume_history::Vector{Float64}
 end
 
@@ -241,7 +241,7 @@ function simp_optimize(
         initialize_element_cache(dh, cellvalues, material_model, n_cells) : nothing
 
     # History tracking
-    compliance_history = Float64[]
+    energy_history = Float64[]
     volume_history = Float64[]
 
     # Tolerance checkpoint tracking
@@ -296,12 +296,12 @@ function simp_optimize(
         # Solve using Symmetric wrapper for CHOLMOD compatibility
         u .= cholesky(Symmetric(K, :L)) \ f
 
-        # Calculate compliance and volume
-        compliance = 0.5 * dot(u, K * u)
+        # Calculate energy and volume
+        energy = 0.5 * dot(u, K * u)
         current_volume = calculate_volume(grid, densities)
         current_volume_fraction = current_volume / total_mesh_volume
 
-        push!(compliance_history, compliance)
+        push!(energy_history, energy)
         push!(volume_history, current_volume)
 
         # Sensitivity analysis (reuse sensitivities vector)
@@ -342,14 +342,14 @@ function simp_optimize(
 
         # Log iteration
         if logger !== nothing
-            log_iteration!(logger, iteration, compliance, current_volume_fraction, change)
+            log_iteration!(logger, iteration, energy, current_volume_fraction, change)
         end
 
         # Print progress
         @printf(
-            "Iter %4d | Compliance: %.4e | Vol.Frac: %.4f | Change: %.4e\n",
+            "Iter %4d | Energy: %.4e | Vol.Frac: %.4f | Change: %.4e\n",
             iteration,
-            compliance,
+            energy,
             current_volume_fraction,
             change
         )
@@ -380,11 +380,11 @@ function simp_optimize(
                         copy(densities),
                         copy(u),
                         stress_cp,
-                        compliance,
+                        energy,
                         current_volume,
                         iteration,
                         false,
-                        copy(compliance_history),
+                        copy(energy_history),
                         copy(volume_history),
                     )
                     cp_results_data = create_results_data(grid, dh, cp_result)
@@ -407,11 +407,11 @@ function simp_optimize(
                     copy(densities),
                     copy(u),
                     stress_field_temp,
-                    compliance,
+                    energy,
                     current_volume,
                     iteration,
                     false,
-                    copy(compliance_history),
+                    copy(energy_history),
                     copy(volume_history),
                 )
                 results_data = create_results_data(grid, dh, intermediate_result)
@@ -469,7 +469,7 @@ function simp_optimize(
     # Solve using Symmetric wrapper for CHOLMOD compatibility
     u .= cholesky(Symmetric(K, :L)) \ f
 
-    final_compliance = 0.5 * dot(u, K * u)
+    final_energy = 0.5 * dot(u, K * u)
     final_volume = calculate_volume(grid, densities)
 
     # Calculate stresses
@@ -478,7 +478,7 @@ function simp_optimize(
 
     # Write summary and close logger
     if logger !== nothing
-        write_summary(logger, final_compliance, final_volume, converged)
+        write_summary(logger, final_energy, final_volume, converged)
         close_logger(logger)
     end
 
@@ -486,18 +486,18 @@ function simp_optimize(
     GC.gc(true)
 
     print_success("Optimization completed")
-    print_data("Final compliance: $final_compliance")
+    print_data("Final energy: $final_energy")
     print_data("Final volume fraction: $(final_volume / total_mesh_volume)")
 
     return OptimizationResult(
         densities,
         u,
         stress_field,
-        final_compliance,
+        final_energy,
         final_volume,
         iteration,
         converged,
-        compliance_history,
+        energy_history,
         volume_history,
     )
 end

@@ -18,7 +18,7 @@ Structure to track optimization progress data for clean display.
 mutable struct OptimizationProgress
     iteration::Int
     volume_fraction::Float64
-    compliance::Float64
+    energy::Float64
     force_magnitude::Float64
     sensitivity_warning::Bool
     change::Float64
@@ -39,7 +39,7 @@ function print_header()
             "%-4s │ %-12s │ %-12s │ %-12s │ %-8s │ %-s",
             "Iter",
             "Vol. Frac.",
-            "Compliance",
+            "Energy",
             "Force Mag.",
             "Change",
             "Warnings"
@@ -57,11 +57,11 @@ function print_iteration(progress::OptimizationProgress)
     # Format volume fraction
     vol_str = @sprintf("%.6f", progress.volume_fraction)
 
-    # Format compliance (use scientific notation if very large/small)
-    if progress.compliance > 1e6 || progress.compliance < 1e-3
-        comp_str = @sprintf("%.3e", progress.compliance)
+    # Format energy (use scientific notation if very large/small)
+    if progress.energy > 1e6 || progress.energy < 1e-3
+        comp_str = @sprintf("%.3e", progress.energy)
     else
-        comp_str = @sprintf("%.3f", progress.compliance)
+        comp_str = @sprintf("%.3f", progress.energy)
     end
 
     # Format force magnitude
@@ -108,7 +108,7 @@ function print_final(final_progress::OptimizationProgress, converged::Bool)
     println("FINAL RESULTS:")
     println("  Iterations:     $(final_progress.iteration)")
     println("  Volume Frac.:   $(final_progress.volume_fraction)")
-    println("  Compliance:     $(final_progress.compliance)")
+    println("  Energy:     $(final_progress.energy)")
     println("  Force Mag.:     $(final_progress.force_magnitude)")
     println("=" ^ 80)
     println()

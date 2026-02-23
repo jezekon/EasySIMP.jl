@@ -28,15 +28,15 @@ function verify_sensitivities(
     # Calculate finite difference sensitivities
     finite_diff = zeros(n_cells)
 
-    # Calculate baseline compliance
-    c0 = calculate_compliance(grid, dh, cellvalues, material_model, densities, u)
+    # Calculate baseline energy
+    c0 = calculate_energy(grid, dh, cellvalues, material_model, densities, u)
 
     for i = 1:min(10, n_cells)  # Only check first 10 elements for efficiency
         # Perturb density
         densities_pert = copy(densities)
         densities_pert[i] += perturbation
 
-        # Recalculate compliance
+        # Recalculate energy
         K_pert = allocate_matrix(dh)
         f_pert = zeros(ndofs(dh))
         assemble_stiffness_matrix_simp!(
@@ -48,14 +48,8 @@ function verify_sensitivities(
             densities_pert,
         )
         u_pert = K_pert \ f_pert
-        c_pert = calculate_compliance(
-            grid,
-            dh,
-            cellvalues,
-            material_model,
-            densities_pert,
-            u_pert,
-        )
+        c_pert =
+            calculate_energy(grid, dh, cellvalues, material_model, densities_pert, u_pert)
 
         # Finite difference approximation
         finite_diff[i] = (c_pert - c0) / perturbation
@@ -79,11 +73,11 @@ function verify_sensitivities(
 end
 
 """
-    calculate_compliance(grid, dh, cellvalues, material_model, densities, u)
+    calculate_energy(grid, dh, cellvalues, material_model, densities, u)
 
-Helper function to calculate total compliance.
+Helper function to calculate total energy.
 """
-function calculate_compliance(
+function calculate_energy(
     grid::Grid,
     dh::DofHandler,
     cellvalues,

@@ -24,7 +24,7 @@ function check_sensitivity_health(sensitivities::Vector{Float64})
         @warn "Sensitivities too large (max: $max_sens). Consider reducing force magnitude or increasing material stiffness."
         return false
     elseif count(s -> s < 0, sensitivities) < length(sensitivities) * 0.5
-        @warn "Less than 50% of sensitivities are negative. Check if compliance sensitivities are computed correctly."
+        @warn "Less than 50% of sensitivities are negative. Check if energy sensitivities are computed correctly."
         return false
     end
 
