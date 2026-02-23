@@ -77,7 +77,7 @@ function write_summary(
         println(io, "Total time:          $(round(total_time, digits=2)) s")
         println(io, "Converged:           $(converged ? "Yes" : "No")")
         println(io)
-        println(io, "Final energy:    $(final_energy)")
+        println(io, "Final energy:        $(final_energy)")
         println(io, "Final volume:        $(final_volume)")
         println(io)
         println(io, "Generated:           $(Dates.format(now(), "yyyy-mm-dd HH:MM:SS"))")

@@ -278,7 +278,7 @@ for tol in tolerance_values
         println(io, "Total time:          $(round(elapsed, digits=2)) s")
         println(io, "Converged:           $(results.converged ? "Yes" : "No")")
         println(io)
-        println(io, "Final energy:    $(results.energy)")
+        println(io, "Final energy:        $(results.energy)")
         println(io, "Final volume frac.:  $(round(vol_frac, digits=6))")
         println(io, "Final volume:        $(results.volume)")
         println(io)

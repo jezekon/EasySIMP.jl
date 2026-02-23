@@ -161,11 +161,7 @@ results = simp_optimize(
     dh,
     cellvalues,
     [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])],
-<<<<<<< Updated upstream
-    [ch_symmetry, ch_support],
-=======
     [ch_symmetry, ch_support, ch_z_fix],
->>>>>>> Stashed changes
     opt_params,
 )
 
