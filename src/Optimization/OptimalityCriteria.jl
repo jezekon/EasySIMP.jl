@@ -47,7 +47,7 @@ Update design variables using the Optimality Criteria method.
 - `damping`: Damping coefficient (default: 0.5)
 
 # Returns
-- Updated density distribution
+- `(new_densities, lagrange_multiplier)`: Updated densities and final λ from
 
 # Method
 Uses Sigmund's OC formula:
@@ -79,6 +79,7 @@ function optimality_criteria_update(
 
     new_densities = copy(densities)
 
+    λ_mid = NaN
     for iter = 1:max_iter
         λ_mid = 0.5 * (λ_low + λ_high)
 
@@ -126,7 +127,7 @@ function optimality_criteria_update(
         end
     end
 
-    return new_densities
+    return new_densities, λ_mid
 end
 
 """

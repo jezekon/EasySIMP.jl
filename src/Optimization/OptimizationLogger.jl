@@ -23,7 +23,10 @@ mutable struct OptimizationLogger
         # Create CSV file with header
         csv_path = joinpath(export_path, "optimization_progress.csv")
         csv_file = open(csv_path, "w")
-        println(csv_file, "Iteration,Energy,VolumeFraction,MaxDensityChange")
+        println(
+            csv_file,
+            "Iteration,Energy,VolumeFraction,MaxDensityChange,LagrangeMultiplier,Grayness,MaxDisplacement",
+        )
 
         new(csv_file, task_name, time(), export_path, 0)
     end
@@ -40,14 +43,20 @@ function log_iteration!(
     energy::Float64,
     volume_fraction::Float64,
     max_change::Float64,
+    lagrange_multiplier::Float64,
+    grayness::Float64,
+    max_displacement::Float64,
 )
     @printf(
         logger.csv_file,
-        "%d,%.6e,%.6f,%.6e\n",
+        "%d,%.6e,%.6f,%.6e,%.6e,%.6f,%.6e\n",
         iteration,
         energy,
         volume_fraction,
-        max_change
+        max_change,
+        lagrange_multiplier,
+        grayness,
+        max_displacement
     )
     flush(logger.csv_file)
     logger.iteration_count = iteration

@@ -327,7 +327,7 @@ function simp_optimize(
         )
 
         # Update densities using OC
-        densities = optimality_criteria_update(
+        densities, lagrange_multiplier = optimality_criteria_update(
             densities,
             filtered_sensitivities,
             params.volume_fraction,
@@ -340,9 +340,23 @@ function simp_optimize(
         # Check convergence
         change = maximum(abs.(densities - old_densities))
 
+        # Compute logging metrics
+        n_gray = count(x -> 0.1 < x < 0.9, densities)
+        grayness = n_gray / length(densities)
+        max_displacement = maximum(abs, u)
+
         # Log iteration
         if logger !== nothing
-            log_iteration!(logger, iteration, energy, current_volume_fraction, change)
+            log_iteration!(
+                logger,
+                iteration,
+                energy,
+                current_volume_fraction,
+                change,
+                lagrange_multiplier,
+                grayness,
+                max_displacement,
+            )
         end
 
         # Print progress
