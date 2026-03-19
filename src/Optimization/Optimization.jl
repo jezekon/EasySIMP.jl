@@ -22,7 +22,7 @@ export FilterCache, create_filter_cache
 include("LoadConditions.jl")
 include("ProgressTable.jl")
 include("OptimalityCriteria.jl")
-include("DensityFilter.jl")
+include("SensitivityFilter.jl")
 include("SensitivityAnalysis.jl")
 include("OptimizationLogger.jl")
 
@@ -43,7 +43,7 @@ Parameters for SIMP topology optimization.
 - `volume_fraction`: Target volume fraction
 - `max_iterations`: Maximum optimization iterations
 - `tolerance`: Convergence tolerance
-- `filter_radius`: Density filter radius (× element size)
+- `filter_radius`: Sensitivity filter radius (× element size)
 - `move_limit`: OC move limit
 - `damping`: OC damping coefficient
 - `use_cache`: Enable element matrix caching
@@ -318,8 +318,8 @@ function simp_optimize(
             params.p,
         )
 
-        # Density filtering with cached neighbors (zero allocations)
-        apply_density_filter_cached!(
+        # Sensitivity filtering with cached neighbors (zero allocations)
+        apply_sensitivity_filter_cached!(
             filtered_sensitivities,
             filter_cache,
             densities,
