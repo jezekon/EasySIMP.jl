@@ -1,5 +1,5 @@
 """
-DensityFilter.jl - Density filtering for SIMP topology optimization
+SensitivityFilter.jl - Sensitivity filtering for SIMP topology optimization
 
 Uses KD-tree spatial indexing for O(n log n) neighbor search instead of O(n²).
 Filter radius = filter_radius_ratio × characteristic_element_size
@@ -14,14 +14,14 @@ using LinearAlgebra
 using NearestNeighbors
 using StaticArrays
 
-export apply_density_filter,
-    apply_density_filter_uniform,
-    apply_density_filter_adaptive,
+export apply_sensitivity_filter,
+    apply_sensitivity_filter_uniform,
+    apply_sensitivity_filter_adaptive,
     estimate_element_size,
     calculate_cell_centers,
     FilterCache,
     create_filter_cache,
-    apply_density_filter_cached!
+    apply_sensitivity_filter_cached!
 
 # =============================================================================
 # FILTER CACHE STRUCTURE
@@ -30,7 +30,7 @@ export apply_density_filter,
 """
     FilterCache
 
-Pre-computed data structure for efficient density filtering.
+Pre-computed data structure for efficient sensitivity filtering.
 Stores KD-tree and neighbor lists to avoid repeated O(n²) searches.
 
 # Fields
@@ -94,7 +94,7 @@ end
 # =============================================================================
 
 """
-    apply_density_filter_cached!(filtered_sens, cache, densities, sensitivities)
+    apply_sensitivity_filter_cached!(filtered_sens, cache, densities, sensitivities)
 
 Apply Sigmund's sensitivity filter using pre-computed neighbors.
 Zero allocations - use in optimization loops.
@@ -108,7 +108,7 @@ Zero allocations - use in optimization loops.
 # Returns
 - `filtered_sens` (modified in-place)
 """
-function apply_density_filter_cached!(
+function apply_sensitivity_filter_cached!(
     filtered_sens::Vector{Float64},
     cache::FilterCache,
     densities::Vector{Float64},
@@ -144,12 +144,12 @@ end
 # =============================================================================
 
 """
-    apply_density_filter(grid, densities, sensitivities, filter_radius_ratio)
+    apply_sensitivity_filter(grid, densities, sensitivities, filter_radius_ratio)
 
-Automatic density filter - chooses uniform or adaptive based on mesh uniformity.
-For optimization loops, prefer create_filter_cache() + apply_density_filter_cached!()
+Automatic sensitivity filter - chooses uniform or adaptive based on mesh uniformity.
+For optimization loops, prefer create_filter_cache() + apply_sensitivity_filter_cached!()
 """
-function apply_density_filter(
+function apply_sensitivity_filter(
     grid::Grid,
     densities::Vector{Float64},
     sensitivities::Vector{Float64},
@@ -159,18 +159,18 @@ function apply_density_filter(
     size_variation = maximum(element_sizes) / minimum(element_sizes)
 
     if size_variation > 1.5
-        return apply_density_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio)
+        return apply_sensitivity_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio)
     else
-        return apply_density_filter_uniform(grid, densities, sensitivities, filter_radius_ratio)
+        return apply_sensitivity_filter_uniform(grid, densities, sensitivities, filter_radius_ratio)
     end
 end
 
 """
-    apply_density_filter_uniform(grid, densities, sensitivities, filter_radius_ratio)
+    apply_sensitivity_filter_uniform(grid, densities, sensitivities, filter_radius_ratio)
 
 Sigmund's sensitivity filter for uniform meshes using KD-tree acceleration.
 """
-function apply_density_filter_uniform(
+function apply_sensitivity_filter_uniform(
     grid::Grid,
     densities::Vector{Float64},
     sensitivities::Vector{Float64},
@@ -217,11 +217,11 @@ function apply_density_filter_uniform(
 end
 
 """
-    apply_density_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio)
+    apply_sensitivity_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio)
 
 Adaptive filter for non-uniform meshes - local filter radius for each element.
 """
-function apply_density_filter_adaptive(
+function apply_sensitivity_filter_adaptive(
     grid::Grid,
     densities::Vector{Float64},
     sensitivities::Vector{Float64},
@@ -381,7 +381,7 @@ function print_filter_info(grid::Grid, filter_radius_ratio::Float64, filter_type
     cell = getcells(grid, 1)
     cell_type = cell isa Ferrite.Tetrahedron ? "Tetrahedron" : "Hexahedron"
 
-    println("Density filter information:")
+    println("Sensitivity filter information:")
     println("  Element type: $cell_type")
     println("  Characteristic element size: $(round(char_size, digits=4))")
     println("  Element size variation: $(round(size_variation, digits=2))")

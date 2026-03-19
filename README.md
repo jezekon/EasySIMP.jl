@@ -8,7 +8,7 @@ EasySIMP is a Julia package for topology optimization using the Solid Isotropic 
 
 ## Features
 
-- **SIMP Optimization**: Classic topology optimization with penalization parameter control and density filtering
+- **SIMP Optimization**: Classic topology optimization with penalization parameter control and sensitivity filtering
 - **Mesh Support**: Linear hexahedral and tetrahedral elements; supports VTU import and simple hexahedral mesh generation
 - **Boundary Conditions**: Fixed supports, sliding planes, distributed forces, surface traction, and body forces
 - **Progress Monitoring**: Real-time optimization progress with energy and volume tracking
@@ -62,7 +62,7 @@ params = OptimizationParameters(;
     volume_fraction = 0.5,                 # Target volume fraction (0-1)
     max_iterations = 200,                  # Maximum optimization iterations
     tolerance = 0.01,                      # Convergence tolerance
-    filter_radius = 1.5,                   # Density filter radius (× element size)
+    filter_radius = 1.5,                   # Sensitivity filter radius (× element size)
     move_limit = 0.2,                      # Maximum density change per iteration
     damping = 0.5,                         # Optimality criteria damping factor
     use_cache = true,                      # Enable performance caching
@@ -79,7 +79,7 @@ params = OptimizationParameters(;
 - **ν**: Poisson's ratio of the material
 - **p**: SIMP penalization parameter (typically 3.0)
 - **volume_fraction**: Target volume constraint as fraction of total volume
-- **filter_radius**: Controls smoothing of density field (1.5-2.5 × average element size recommended)
+- **filter_radius**: Controls smoothing of sensitivity field (1.5-2.5 × average element size recommended)
 - **export_interval**: When > 0, exports intermediate results every N iterations for animation
 - **use_cache**: Enables caching of element stiffness matrices for improved performance
 - **task_name**: Identifier for logging and summary files
