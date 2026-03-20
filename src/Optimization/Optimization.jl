@@ -43,7 +43,8 @@ Parameters for SIMP topology optimization.
 - `volume_fraction`: Target volume fraction
 - `max_iterations`: Maximum optimization iterations
 - `tolerance`: Convergence tolerance
-- `filter_radius`: Sensitivity filter radius (× element size)
+- `filter_radius`: Filter radius (× element size)
+- `filter_type`: Filter type (:sensitivity or :density)
 - `move_limit`: OC move limit
 - `damping`: OC damping coefficient
 - `use_cache`: Enable element matrix caching
@@ -66,6 +67,7 @@ mutable struct OptimizationParameters
 
     # Filter settings
     filter_radius::Float64
+    filter_type::Symbol  # :sensitivity or :density
 
     # OC parameters
     move_limit::Float64
@@ -93,6 +95,7 @@ mutable struct OptimizationParameters
         max_iterations = 200,
         tolerance = 0.01,
         filter_radius = 1.5,
+        filter_type = :sensitivity,
         move_limit = 0.2,
         damping = 0.5,
         use_cache = true,
@@ -110,6 +113,7 @@ mutable struct OptimizationParameters
             max_iterations,
             tolerance,
             filter_radius,
+            filter_type,
             move_limit,
             damping,
             use_cache,
@@ -219,6 +223,8 @@ function simp_optimize(
     # Initialize densities
     densities = fill(params.volume_fraction, n_cells)
     old_densities = zeros(n_cells)
+    filtered_densities = zeros(n_cells)
+    use_density_filter = params.filter_type == :density
 
     # Create material model
     material_model = create_simp_material_model(params.E0, params.ν, params.Emin, params.p)
@@ -264,6 +270,14 @@ function simp_optimize(
         fill!(K.nzval, 0.0)
         fill!(f, 0.0)
 
+        # Density filter: compute physical densities before assembly
+        if use_density_filter
+            apply_density_filter_cached!(filtered_densities, filter_cache, densities, element_volumes)
+            physical_densities = filtered_densities
+        else
+            physical_densities = densities
+        end
+
         # Assemble system with in-place operations
         assemble_stiffness_matrix_simp_inplace!(
             K,
@@ -271,7 +285,7 @@ function simp_optimize(
             dh,
             cellvalues,
             material_model,
-            densities,
+            physical_densities,
             cache,
             ke_buffer,
             fe_buffer,
@@ -280,7 +294,7 @@ function simp_optimize(
         # Apply acceleration if provided
         if acceleration_data !== nothing
             acceleration_vector, base_density = acceleration_data
-            variable_densities = densities .* base_density
+            variable_densities = physical_densities .* base_density
             apply_variable_density_volume_force!(
                 f,
                 dh,
@@ -298,8 +312,8 @@ function simp_optimize(
 
         # Calculate energy and volume
         energy = 0.5 * dot(u, K * u)
-        current_volume = calculate_volume(grid, densities)
-        current_volume_fraction = current_volume / total_mesh_volume
+        current_volume = dot(physical_densities, element_volumes)
+        current_volume_fraction = current_volume / total_volume
 
         push!(energy_history, energy)
         push!(volume_history, current_volume)
@@ -310,7 +324,7 @@ function simp_optimize(
             grid,
             dh,
             cellvalues,
-            densities,
+            physical_densities,
             u,
             params.E0,
             params.Emin,
@@ -318,13 +332,24 @@ function simp_optimize(
             params.p,
         )
 
-        # Sensitivity filtering with cached neighbors (zero allocations)
-        apply_sensitivity_filter_cached!(
-            filtered_sensitivities,
-            filter_cache,
-            densities,
-            sensitivities,
-        )
+        # Filter sensitivities
+        if use_density_filter
+            # Chain rule: transform sensitivities from physical to design space
+            apply_density_filter_chain_rule_cached!(
+                filtered_sensitivities,
+                filter_cache,
+                sensitivities,
+                element_volumes,
+            )
+        else
+            # Sigmund's sensitivity filter
+            apply_sensitivity_filter_cached!(
+                filtered_sensitivities,
+                filter_cache,
+                densities,
+                sensitivities,
+            )
+        end
 
         # Update densities using OC
         densities, lagrange_multiplier = optimality_criteria_update(
@@ -341,8 +366,8 @@ function simp_optimize(
         change = maximum(abs.(densities - old_densities))
 
         # Compute logging metrics
-        n_gray = count(x -> 0.1 < x < 0.9, densities)
-        grayness = n_gray / length(densities)
+        n_gray = count(x -> 0.1 < x < 0.9, physical_densities)
+        grayness = n_gray / length(physical_densities)
         max_displacement = maximum(abs, u)
 
         # Log iteration
@@ -388,10 +413,10 @@ function simp_optimize(
                         dh,
                         cellvalues,
                         material_model,
-                        densities,
+                        physical_densities,
                     )
                     cp_result = OptimizationResult(
-                        copy(densities),
+                        copy(physical_densities),
                         copy(u),
                         stress_cp,
                         energy,
@@ -416,9 +441,9 @@ function simp_optimize(
             if !isempty(params.export_path)
                 # Reuse existing K, f, u - no extra allocation
                 stress_field_temp, _, _ =
-                    calculate_stresses_simp(u, dh, cellvalues, material_model, densities)
+                    calculate_stresses_simp(u, dh, cellvalues, material_model, physical_densities)
                 intermediate_result = OptimizationResult(
-                    copy(densities),
+                    copy(physical_densities),
                     copy(u),
                     stress_field_temp,
                     energy,
@@ -454,13 +479,22 @@ function simp_optimize(
     # =========================================================================
     fill!(K.nzval, 0.0)
     fill!(f, 0.0)
+
+    # Compute final physical densities
+    if use_density_filter
+        apply_density_filter_cached!(filtered_densities, filter_cache, densities, element_volumes)
+        final_physical_densities = filtered_densities
+    else
+        final_physical_densities = densities
+    end
+
     assemble_stiffness_matrix_simp_inplace!(
         K,
         f,
         dh,
         cellvalues,
         material_model,
-        densities,
+        final_physical_densities,
         cache,
         ke_buffer,
         fe_buffer,
@@ -468,7 +502,7 @@ function simp_optimize(
 
     if acceleration_data !== nothing
         acceleration_vector, base_density = acceleration_data
-        variable_densities = densities .* base_density
+        variable_densities = final_physical_densities .* base_density
         apply_variable_density_volume_force!(
             f,
             dh,
@@ -484,11 +518,11 @@ function simp_optimize(
     u .= cholesky(Symmetric(K, :L)) \ f
 
     final_energy = 0.5 * dot(u, K * u)
-    final_volume = calculate_volume(grid, densities)
+    final_volume = dot(final_physical_densities, element_volumes)
 
     # Calculate stresses
     stress_field, max_von_mises, max_stress_cell =
-        calculate_stresses_simp(u, dh, cellvalues, material_model, densities)
+        calculate_stresses_simp(u, dh, cellvalues, material_model, final_physical_densities)
 
     # Write summary and close logger
     if logger !== nothing
@@ -501,10 +535,10 @@ function simp_optimize(
 
     print_success("Optimization completed")
     print_data("Final energy: $final_energy")
-    print_data("Final volume fraction: $(final_volume / total_mesh_volume)")
+    print_data("Final volume fraction: $(final_volume / total_volume)")
 
     return OptimizationResult(
-        densities,
+        final_physical_densities,
         u,
         stress_field,
         final_energy,
