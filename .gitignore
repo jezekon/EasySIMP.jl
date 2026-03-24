@@ -5,3 +5,5 @@
 !data/*.vtu
 *.csv
 *.txt
+/.claude
+.DS_Store
