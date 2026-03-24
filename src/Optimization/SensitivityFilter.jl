@@ -62,35 +62,42 @@ Call ONCE before the optimization loop.
 # Returns
 - `FilterCache` with pre-computed neighbor lists
 """
-function create_filter_cache(grid::Grid, filter_radius_ratio::Float64, element_volumes::Vector{Float64})
+function create_filter_cache(
+    grid::Grid,
+    filter_radius_ratio::Float64,
+    element_volumes::Vector{Float64},
+)
     n_cells = getncells(grid)
-    
+
     # Calculate cell centers
     cell_centers = calculate_cell_centers(grid)
-    
+
     # Determine filter radius
     char_size = estimate_element_size(grid)
     filter_radius = filter_radius_ratio * char_size
-    
+
     # Build KD-tree from cell centers
     centers_matrix = zeros(3, n_cells)
-    for i in 1:n_cells
+    for i = 1:n_cells
         centers_matrix[1, i] = cell_centers[i][1]
         centers_matrix[2, i] = cell_centers[i][2]
         centers_matrix[3, i] = cell_centers[i][3]
     end
     kdtree = KDTree(centers_matrix)
-    
+
     # Pre-compute neighbor lists for all cells
     neighbor_lists = Vector{Vector{Int}}(undef, n_cells)
-    for i in 1:n_cells
-        point = SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
+    for i = 1:n_cells
+        point =
+            SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
         neighbor_lists[i] = inrange(kdtree, point, filter_radius)
     end
-    
+
     avg_neighbors = sum(length.(neighbor_lists)) / n_cells
-    println("FilterCache created: $(n_cells) cells, r=$(round(filter_radius, digits=4)), avg_neighbors=$(round(avg_neighbors, digits=1))")
-    
+    println(
+        "FilterCache created: $(n_cells) cells, r=$(round(filter_radius, digits=4)), avg_neighbors=$(round(avg_neighbors, digits=1))",
+    )
+
     return FilterCache(neighbor_lists, cell_centers, filter_radius, element_volumes)
 end
 
@@ -126,7 +133,7 @@ function apply_sensitivity_filter_cached!(
     filter_radius = cache.filter_radius
     volumes = cache.element_volumes
 
-    @inbounds for i in 1:n_cells
+    @inbounds for i = 1:n_cells
         numerator = 0.0
         denominator = 0.0
         center_i = cell_centers[i]
@@ -141,7 +148,11 @@ function apply_sensitivity_filter_cached!(
             end
         end
 
-        filtered_sens[i] = denominator > 1e-12 ? numerator / (densities[i] / volumes[i] * denominator) : sensitivities[i]
+        # Guard against division by near-zero density — Sigmund (2007), below eq. 16
+        rho_safe = max(1e-3, densities[i])
+        filtered_sens[i] =
+            denominator > 1e-12 ? numerator / (rho_safe / volumes[i] * denominator) :
+            sensitivities[i]
     end
 
     return filtered_sens
@@ -176,7 +187,7 @@ function apply_density_filter_cached!(
     cell_centers = cache.cell_centers
     filter_radius = cache.filter_radius
 
-    @inbounds for i in 1:n_cells
+    @inbounds for i = 1:n_cells
         numerator = 0.0
         denominator = 0.0
         center_i = cell_centers[i]
@@ -228,7 +239,7 @@ function apply_density_filter_chain_rule_cached!(
 
     # Transpose operation: for each element i, distribute its sensitivity
     # contribution to all its neighbors e
-    @inbounds for i in 1:n_cells
+    @inbounds for i = 1:n_cells
         center_i = cell_centers[i]
 
         # Compute denominator for element i: Σ_j H_ij V_j
@@ -246,7 +257,8 @@ function apply_density_filter_chain_rule_cached!(
                 distance = norm(cell_centers[e] - center_i)
                 weight = max(0.0, filter_radius - distance)
                 if weight > 0.0
-                    filtered_sens[e] += (weight * element_volumes[e] / denominator_i) * sensitivities[i]
+                    filtered_sens[e] +=
+                        (weight * element_volumes[e] / denominator_i) * sensitivities[i]
                 end
             end
         end
@@ -276,9 +288,21 @@ function apply_sensitivity_filter(
     size_variation = maximum(element_sizes) / minimum(element_sizes)
 
     if size_variation > 1.5
-        return apply_sensitivity_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio, element_volumes)
+        return apply_sensitivity_filter_adaptive(
+            grid,
+            densities,
+            sensitivities,
+            filter_radius_ratio,
+            element_volumes,
+        )
     else
-        return apply_sensitivity_filter_uniform(grid, densities, sensitivities, filter_radius_ratio, element_volumes)
+        return apply_sensitivity_filter_uniform(
+            grid,
+            densities,
+            sensitivities,
+            filter_radius_ratio,
+            element_volumes,
+        )
     end
 end
 
@@ -305,19 +329,20 @@ function apply_sensitivity_filter_uniform(
 
     # Build KD-tree
     centers_matrix = zeros(3, n_cells)
-    for i in 1:n_cells
+    for i = 1:n_cells
         centers_matrix[1, i] = cell_centers[i][1]
         centers_matrix[2, i] = cell_centers[i][2]
         centers_matrix[3, i] = cell_centers[i][3]
     end
     kdtree = KDTree(centers_matrix)
 
-    for i in 1:n_cells
+    for i = 1:n_cells
         numerator = 0.0
         denominator = 0.0
 
         # KD-tree range query: O(log n) instead of O(n)
-        point = SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
+        point =
+            SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
         neighbors = inrange(kdtree, point, filter_radius)
 
         for j in neighbors
@@ -330,7 +355,11 @@ function apply_sensitivity_filter_uniform(
             end
         end
 
-        filtered_sensitivities[i] = denominator > 1e-12 ? numerator / (densities[i] / element_volumes[i] * denominator) : sensitivities[i]
+        # Guard against division by near-zero density — Sigmund (2007), below eq. 16
+        rho_safe = max(1e-3, densities[i])
+        filtered_sensitivities[i] =
+            denominator > 1e-12 ?
+            numerator / (rho_safe / element_volumes[i] * denominator) : sensitivities[i]
     end
 
     return filtered_sensitivities
@@ -359,19 +388,20 @@ function apply_sensitivity_filter_adaptive(
 
     # Build KD-tree
     centers_matrix = zeros(3, n_cells)
-    for i in 1:n_cells
+    for i = 1:n_cells
         centers_matrix[1, i] = cell_centers[i][1]
         centers_matrix[2, i] = cell_centers[i][2]
         centers_matrix[3, i] = cell_centers[i][3]
     end
     kdtree = KDTree(centers_matrix)
 
-    for i in 1:n_cells
+    for i = 1:n_cells
         local_radius = filter_radius_ratio * element_sizes[i]
         numerator = 0.0
         denominator = 0.0
 
-        point = SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
+        point =
+            SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
         neighbors = inrange(kdtree, point, local_radius)
 
         for j in neighbors
@@ -384,7 +414,11 @@ function apply_sensitivity_filter_adaptive(
             end
         end
 
-        filtered_sensitivities[i] = denominator > 1e-12 ? numerator / (densities[i] / element_volumes[i] * denominator) : sensitivities[i]
+        # Guard against division by near-zero density — Sigmund (2007), below eq. 16
+        rho_safe = max(1e-3, densities[i])
+        filtered_sensitivities[i] =
+            denominator > 1e-12 ?
+            numerator / (rho_safe / element_volumes[i] * denominator) : sensitivities[i]
     end
 
     return filtered_sensitivities
@@ -496,7 +530,11 @@ end
 
 Print filter settings information.
 """
-function print_filter_info(grid::Grid, filter_radius_ratio::Float64, filter_type::String = "auto")
+function print_filter_info(
+    grid::Grid,
+    filter_radius_ratio::Float64,
+    filter_type::String = "auto",
+)
     char_size = estimate_element_size(grid)
     element_sizes = calculate_element_sizes(grid)
     size_variation = maximum(element_sizes) / minimum(element_sizes)
@@ -511,6 +549,8 @@ function print_filter_info(grid::Grid, filter_radius_ratio::Float64, filter_type
     println("  Filter radius ratio: $filter_radius_ratio")
     println("  Actual filter radius: $(round(filter_radius_ratio * char_size, digits=4))")
 
-    actual_type = filter_type == "auto" ? (size_variation > 1.5 ? "adaptive" : "uniform") : filter_type
+    actual_type =
+        filter_type == "auto" ? (size_variation > 1.5 ? "adaptive" : "uniform") :
+        filter_type
     println("  Filter type: $actual_type")
 end
