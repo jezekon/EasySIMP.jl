@@ -238,7 +238,7 @@ function simp_optimize(
     print_data("Total mesh volume: $total_volume")
 
     # Create FilterCache - KD-tree built ONCE
-    filter_cache = create_filter_cache(grid, params.filter_radius)
+    filter_cache = create_filter_cache(grid, params.filter_radius, element_volumes)
     print_filter_info(grid, params.filter_radius, "auto")
 
     # Create element stiffness cache if enabled
