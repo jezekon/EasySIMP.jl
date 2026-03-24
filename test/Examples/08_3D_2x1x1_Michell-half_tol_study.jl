@@ -185,8 +185,6 @@ for tol in tolerance_values
     ch_support_right = apply_fixed_boundary!(K_run, f_run, dh, support_right)
     ch_symmetry_z = apply_sliding_boundary!(K_run, f_run, dh, symmetry_z_nodes, [3])
 
-    apply_force!(f_run, dh, collect(force_nodes), [0.0, -1.0, 0.0])
-
     # Optimization parameters
     opt_params = OptimizationParameters(
         E0 = E0,

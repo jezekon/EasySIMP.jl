@@ -49,6 +49,9 @@ export import_mesh
 export setup_problem,
     create_material_model, create_simp_material_model, assemble_stiffness_matrix_simp!
 
+# FEM assembly and geometry
+export initialize_element_cache, calculate_element_volumes, create_volume_quadrature
+
 # Boundary conditions
 export apply_fixed_boundary!, apply_sliding_boundary!
 
@@ -58,9 +61,6 @@ export apply_force!, apply_surface_traction!, get_boundary_facets
 # Node selection
 export select_nodes_by_plane,
     select_nodes_by_circle, select_nodes_by_cylinder, select_nodes_by_arc
-
-# Solver
-export solve_system
 
 # Optimization
 export OptimizationParameters, simp_optimize
