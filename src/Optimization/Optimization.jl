@@ -272,7 +272,7 @@ function simp_optimize(
 
         # Density filter: compute physical densities before assembly
         if use_density_filter
-            apply_density_filter_cached!(filtered_densities, filter_cache, densities, element_volumes)
+            apply_density_filter_cached!(filtered_densities, filter_cache, densities)
             physical_densities = filtered_densities
         else
             physical_densities = densities
@@ -339,7 +339,6 @@ function simp_optimize(
                 filtered_sensitivities,
                 filter_cache,
                 sensitivities,
-                element_volumes,
             )
         else
             # Sigmund's sensitivity filter
@@ -482,7 +481,7 @@ function simp_optimize(
 
     # Compute final physical densities
     if use_density_filter
-        apply_density_filter_cached!(filtered_densities, filter_cache, densities, element_volumes)
+        apply_density_filter_cached!(filtered_densities, filter_cache, densities)
         final_physical_densities = filtered_densities
     else
         final_physical_densities = densities
