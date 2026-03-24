@@ -14,10 +14,7 @@ using LinearAlgebra
 using NearestNeighbors
 using StaticArrays
 
-export apply_sensitivity_filter,
-    apply_sensitivity_filter_uniform,
-    apply_sensitivity_filter_adaptive,
-    estimate_element_size,
+export estimate_element_size,
     calculate_cell_centers,
     FilterCache,
     create_filter_cache,
@@ -163,7 +160,7 @@ end
 # =============================================================================
 
 """
-    apply_density_filter_cached!(filtered_densities, cache, densities, element_volumes)
+    apply_density_filter_cached!(filtered_densities, cache, densities)
 
 Apply density filter using pre-computed neighbors. Replaces each element density
 with a volume-weighted average over neighbors within the filter radius.
@@ -175,17 +172,16 @@ where H_ei = max(0, R - ||x_e - x_i||)
 - `filtered_densities`: Output vector (modified in-place)
 - `cache`: Pre-computed FilterCache
 - `densities`: Current density distribution (design variables)
-- `element_volumes`: Volume of each element
 """
 function apply_density_filter_cached!(
     filtered_densities::Vector{Float64},
     cache::FilterCache,
     densities::Vector{Float64},
-    element_volumes::Vector{Float64},
 )
     n_cells = length(densities)
     cell_centers = cache.cell_centers
     filter_radius = cache.filter_radius
+    element_volumes = cache.element_volumes
 
     @inbounds for i = 1:n_cells
         numerator = 0.0
@@ -210,7 +206,7 @@ function apply_density_filter_cached!(
 end
 
 """
-    apply_density_filter_chain_rule_cached!(filtered_sens, cache, sensitivities, element_volumes)
+    apply_density_filter_chain_rule_cached!(filtered_sens, cache, sensitivities)
 
 Apply chain rule for density filter to transform sensitivities from
 filtered (physical) space back to design variable space.
@@ -223,17 +219,16 @@ Uses the transpose of the density filter operator.
 - `filtered_sens`: Output vector (modified in-place)
 - `cache`: Pre-computed FilterCache
 - `sensitivities`: Sensitivities w.r.t. filtered densities (∂f/∂ρ̃)
-- `element_volumes`: Volume of each element
 """
 function apply_density_filter_chain_rule_cached!(
     filtered_sens::Vector{Float64},
     cache::FilterCache,
     sensitivities::Vector{Float64},
-    element_volumes::Vector{Float64},
 )
     n_cells = length(sensitivities)
     cell_centers = cache.cell_centers
     filter_radius = cache.filter_radius
+    element_volumes = cache.element_volumes
 
     fill!(filtered_sens, 0.0)
 
@@ -265,163 +260,6 @@ function apply_density_filter_chain_rule_cached!(
     end
 
     return filtered_sens
-end
-
-# =============================================================================
-# STANDARD INTERFACE (for backward compatibility)
-# =============================================================================
-
-"""
-    apply_sensitivity_filter(grid, densities, sensitivities, filter_radius_ratio, element_volumes)
-
-Automatic sensitivity filter - chooses uniform or adaptive based on mesh uniformity.
-For optimization loops, prefer create_filter_cache() + apply_sensitivity_filter_cached!()
-"""
-function apply_sensitivity_filter(
-    grid::Grid,
-    densities::Vector{Float64},
-    sensitivities::Vector{Float64},
-    filter_radius_ratio::Float64,
-    element_volumes::Vector{Float64},
-)
-    element_sizes = calculate_element_sizes(grid)
-    size_variation = maximum(element_sizes) / minimum(element_sizes)
-
-    if size_variation > 1.5
-        return apply_sensitivity_filter_adaptive(
-            grid,
-            densities,
-            sensitivities,
-            filter_radius_ratio,
-            element_volumes,
-        )
-    else
-        return apply_sensitivity_filter_uniform(
-            grid,
-            densities,
-            sensitivities,
-            filter_radius_ratio,
-            element_volumes,
-        )
-    end
-end
-
-"""
-    apply_sensitivity_filter_uniform(grid, densities, sensitivities, filter_radius_ratio, element_volumes)
-
-Sigmund's sensitivity filter for uniform meshes using KD-tree acceleration.
-
-Formula: filtered = Σ(H_ij ρ_j (∂J/∂ρ_j) / V_j) / (ρ_e/V_e Σ H_ij)
-"""
-function apply_sensitivity_filter_uniform(
-    grid::Grid,
-    densities::Vector{Float64},
-    sensitivities::Vector{Float64},
-    filter_radius_ratio::Float64,
-    element_volumes::Vector{Float64},
-)
-    n_cells = getncells(grid)
-    filtered_sensitivities = zeros(n_cells)
-
-    char_element_size = estimate_element_size(grid)
-    filter_radius = filter_radius_ratio * char_element_size
-    cell_centers = calculate_cell_centers(grid)
-
-    # Build KD-tree
-    centers_matrix = zeros(3, n_cells)
-    for i = 1:n_cells
-        centers_matrix[1, i] = cell_centers[i][1]
-        centers_matrix[2, i] = cell_centers[i][2]
-        centers_matrix[3, i] = cell_centers[i][3]
-    end
-    kdtree = KDTree(centers_matrix)
-
-    for i = 1:n_cells
-        numerator = 0.0
-        denominator = 0.0
-
-        # KD-tree range query: O(log n) instead of O(n)
-        point =
-            SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
-        neighbors = inrange(kdtree, point, filter_radius)
-
-        for j in neighbors
-            distance = norm(cell_centers[i] - cell_centers[j])
-            weight = max(0.0, filter_radius - distance)
-
-            if weight > 0.0
-                numerator += weight * densities[j] * sensitivities[j] / element_volumes[j]
-                denominator += weight
-            end
-        end
-
-        # Guard against division by near-zero density — Sigmund (2007), below eq. 16
-        rho_safe = max(1e-3, densities[i])
-        filtered_sensitivities[i] =
-            denominator > 1e-12 ?
-            numerator / (rho_safe / element_volumes[i] * denominator) : sensitivities[i]
-    end
-
-    return filtered_sensitivities
-end
-
-"""
-    apply_sensitivity_filter_adaptive(grid, densities, sensitivities, filter_radius_ratio, element_volumes)
-
-Adaptive filter for non-uniform meshes - local filter radius for each element.
-
-Formula: filtered = Σ(H_ij ρ_j (∂J/∂ρ_j) / V_j) / (ρ_e/V_e Σ H_ij)
-"""
-function apply_sensitivity_filter_adaptive(
-    grid::Grid,
-    densities::Vector{Float64},
-    sensitivities::Vector{Float64},
-    filter_radius_ratio::Float64,
-    element_volumes::Vector{Float64},
-)
-    n_cells = getncells(grid)
-    filtered_sensitivities = zeros(n_cells)
-
-    element_sizes = calculate_element_sizes(grid)
-    cell_centers = calculate_cell_centers(grid)
-    max_radius = filter_radius_ratio * maximum(element_sizes)
-
-    # Build KD-tree
-    centers_matrix = zeros(3, n_cells)
-    for i = 1:n_cells
-        centers_matrix[1, i] = cell_centers[i][1]
-        centers_matrix[2, i] = cell_centers[i][2]
-        centers_matrix[3, i] = cell_centers[i][3]
-    end
-    kdtree = KDTree(centers_matrix)
-
-    for i = 1:n_cells
-        local_radius = filter_radius_ratio * element_sizes[i]
-        numerator = 0.0
-        denominator = 0.0
-
-        point =
-            SVector{3,Float64}(cell_centers[i][1], cell_centers[i][2], cell_centers[i][3])
-        neighbors = inrange(kdtree, point, local_radius)
-
-        for j in neighbors
-            distance = norm(cell_centers[i] - cell_centers[j])
-            weight = max(0.0, local_radius - distance)
-
-            if weight > 0.0
-                numerator += weight * densities[j] * sensitivities[j] / element_volumes[j]
-                denominator += weight
-            end
-        end
-
-        # Guard against division by near-zero density — Sigmund (2007), below eq. 16
-        rho_safe = max(1e-3, densities[i])
-        filtered_sensitivities[i] =
-            denominator > 1e-12 ?
-            numerator / (rho_safe / element_volumes[i] * denominator) : sensitivities[i]
-    end
-
-    return filtered_sensitivities
 end
 
 # =============================================================================
