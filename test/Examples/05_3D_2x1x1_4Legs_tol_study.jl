@@ -62,7 +62,7 @@ using Dates
 # -----------------------------------------------------------------------------
 # First run triggers JIT compilation and is slower - duplicate 0.16 ensures
 # the second run (and all subsequent) give consistent timing results.
-tolerance_values = [0.16, 0.16, 0.08, 0.04, 0.02, 0.01]
+tolerance_values = [0.16, 0.16, 0.08, 0.04, 0.02, 0.01, 0.005]
 
 # Storage for results
 struct BatchResult
@@ -222,6 +222,7 @@ for tol in tolerance_values
         max_iterations = 3000,
         tolerance = tol,
         filter_radius = 2.0,
+        filter_type = :sensitivity, # :density :sensitivity
         move_limit = 0.2,
         damping = 0.5,
         use_cache = true,
