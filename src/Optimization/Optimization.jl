@@ -12,17 +12,13 @@ using ..PostProcessing
 # Export main functions
 export simp_optimize, OptimizationParameters, OptimizationResult
 
-# Export load condition types
-export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
-
 # Export filter cache
 export FilterCache, create_filter_cache
 
 # Include submodules
-include("LoadConditions.jl")
-include("ProgressTable.jl")
 include("OptimalityCriteria.jl")
 include("SensitivityFilter.jl")
+include("DensityFilter.jl")
 include("SensitivityAnalysis.jl")
 include("OptimizationLogger.jl")
 
@@ -550,152 +546,6 @@ function simp_optimize(
 end
 
 # =============================================================================
-# IN-PLACE ASSEMBLY FUNCTIONS
-# =============================================================================
-
-"""
-    initialize_element_cache(dh, cellvalues, material_model, n_cells)
-
-Initialize element stiffness matrix cache with unit matrices.
-"""
-function initialize_element_cache(dh, cellvalues, material_model, n_cells)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
-    λ_unit, μ_unit = material_model(1.0)
-
-    print_info("Computing element stiffness matrix cache...")
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        reinit!(cellvalues, cell)
-        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
-        unit_matrices[cell_id] = ke_unit
-    end
-
-    # Store unit material parameters for scaling
-    cache = Dict{Symbol,Any}()
-    cache[:unit_matrices] = unit_matrices
-    cache[:λ_unit] = λ_unit
-    cache[:μ_unit] = μ_unit
-
-    print_success("Element cache initialized: $(n_cells) unit matrices")
-    return cache
-end
-
-"""
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer)
-
-Assemble global stiffness matrix with in-place operations to avoid allocations.
-"""
-function assemble_stiffness_matrix_simp!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    densities,
-    cache,
-    ke_buffer,
-    fe_buffer,
-)
-    if cache !== nothing
-        assemble_with_cache!(
-            K,
-            f,
-            dh,
-            material_model,
-            densities,
-            cache,
-            ke_buffer,
-            fe_buffer,
-        )
-    else
-        assemble_variable_material!(
-            K,
-            f,
-            dh,
-            cellvalues,
-            material_model,
-            densities,
-            ke_buffer,
-            fe_buffer,
-        )
-    end
-end
-
-"""
-    assemble_with_cache!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
-
-Assembly using cached unit matrices with in-place scaling.
-"""
-function assemble_with_cache!(
-    K,
-    f,
-    dh,
-    material_model,
-    densities,
-    cache,
-    ke_buffer,
-    fe_buffer,
-)
-    unit_matrices = cache[:unit_matrices]
-    λ_unit = cache[:λ_unit]
-
-    fill!(fe_buffer, 0.0)
-    assembler = start_assemble(K, f)
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        density = densities[cell_id]
-
-        # Get current material parameters
-        λ_current, _ = material_model(density)
-        scaling_factor = λ_current / λ_unit
-
-        # In-place scaling: ke_buffer = scaling_factor * unit_matrix
-        unit_ke = unit_matrices[cell_id]
-        @inbounds for j = 1:size(ke_buffer, 2)
-            for i = 1:size(ke_buffer, 1)
-                ke_buffer[i, j] = scaling_factor * unit_ke[i, j]
-            end
-        end
-
-        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
-    end
-end
-
-"""
-    assemble_variable_material!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
-
-Assembly for variable material properties without caching.
-"""
-function assemble_variable_material!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    densities,
-    ke_buffer,
-    fe_buffer,
-)
-    fill!(fe_buffer, 0.0)
-    assembler = start_assemble(K, f)
-
-    for cell in CellIterator(dh)
-        reinit!(cellvalues, cell)
-
-        cell_id = cellid(cell)
-        density = densities[cell_id]
-        λ, μ = material_model(density)
-
-        # Compute element stiffness into buffer
-        assemble_element_stiffness_matrix!(ke_buffer, cellvalues, λ, μ)
-        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
-    end
-end
-
-# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -712,57 +562,6 @@ function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
     for bc in boundary_conditions
         apply!(K, f, bc)
     end
-end
-
-"""
-    calculate_element_volumes(grid, cellvalues)
-
-Calculate volume of each element in the grid.
-"""
-function calculate_element_volumes(grid::Grid, cellvalues)
-    n_cells = getncells(grid)
-    element_volumes = zeros(n_cells)
-
-    for cell_idx = 1:n_cells
-        coords = getcoordinates(grid, cell_idx)
-        reinit!(cellvalues, coords)
-
-        volume = 0.0
-        for q_point = 1:getnquadpoints(cellvalues)
-            dΩ = getdetJdV(cellvalues, q_point)
-            volume += dΩ
-        end
-        element_volumes[cell_idx] = volume
-    end
-
-    return element_volumes
-end
-
-"""
-    create_volume_quadrature(grid)
-
-Create CellValues for volume calculation with 3rd order quadrature.
-"""
-function create_volume_quadrature(grid::Grid{dim}) where {dim}
-    cell = getcells(grid, 1)
-
-    if cell isa Hexahedron
-        ip = Lagrange{RefHexahedron,1}()
-        qr = QuadratureRule{RefHexahedron}(3)
-    elseif cell isa Tetrahedron
-        ip = Lagrange{RefTetrahedron,1}()
-        qr = QuadratureRule{RefTetrahedron}(3)
-    elseif cell isa Quadrilateral && dim == 2
-        ip = Lagrange{RefQuadrilateral,1}()
-        qr = QuadratureRule{RefQuadrilateral}(3)
-    elseif cell isa Triangle && dim == 2
-        ip = Lagrange{RefTriangle,1}()
-        qr = QuadratureRule{RefTriangle}(3)
-    else
-        error("Unsupported cell type: $(typeof(cell))")
-    end
-
-    return CellValues(qr, ip)
 end
 
 end # module
