@@ -188,7 +188,7 @@ results = simp_optimize(
 # 10. EXPORT FINAL RESULTS
 # -----------------------------------------------------------------------------
 println("\nExporting final results...")
-results_data = create_results_data(grid, dh, results)
+results_data = create_results_data(grid, dh, cellvalues, results)
 export_results_vtu(results_data, joinpath(results_dir, "final"))
 
 # -----------------------------------------------------------------------------

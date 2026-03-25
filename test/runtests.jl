@@ -104,7 +104,7 @@ using EasySIMP.Utils
             print_data("Iterations: $(results.iterations)")
 
             # Export results
-            results_data = create_results_data(grid, dh, results)
+            results_data = create_results_data(grid, dh, cellvalues, results)
             export_results_vtu(results_data, "cantilever_beam_simp_test")
 
             print_success("Test completed successfully!")
@@ -227,7 +227,7 @@ using EasySIMP.Utils
             print_data("Iterations: $(results.iterations)")
 
             # Export results
-            results_data = create_results_data(grid, dh, results)
+            results_data = create_results_data(grid, dh, cellvalues, results)
             export_results_vtu(results_data, "cantilever_beam_sliding_test")
 
             print_success("Sliding support test completed successfully!")
@@ -321,7 +321,7 @@ using EasySIMP.Utils
             print_data("Iterations: $(results.iterations)")
 
             # Export results
-            results_data = create_results_data(grid, dh, results)
+            results_data = create_results_data(grid, dh, cellvalues, results)
             export_results_vtu(results_data, "cantilever_beam_acceleration_test")
 
             print_success("Acceleration test completed successfully!")
@@ -526,7 +526,7 @@ using EasySIMP.Utils
             print_data("Converged: $(results.converged)")
 
             # Export results
-            results_data = create_results_data(grid, dh, results)
+            results_data = create_results_data(grid, dh, cellvalues, results)
             export_results_vtu(results_data, "gripper_TO_vfrac-$(0.3)")
 
             print_success("Gripper test completed successfully!")

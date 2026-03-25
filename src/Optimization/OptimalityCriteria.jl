@@ -85,25 +85,23 @@ function optimality_criteria_update(
 
         # Update densities using Sigmund's OC formula
         for i = 1:n_elements
-            if sensitivities[i] < 0
-                # Volume sensitivity (normalized)
-                volume_sensitivity = element_volumes[i] / total_volume
+            # Volume sensitivity (normalized)
+            volume_sensitivity = element_volumes[i] / total_volume
 
-                # Optimality ratio: Be = (-dc/dx) / (λ * dV/dx)
-                Be = (-sensitivities[i]) / (λ_mid * volume_sensitivity)
+            # Optimality ratio: Be = |dc/dx| / (λ * dV/dx)
+            Be = abs(sensitivities[i]) / (λ_mid * volume_sensitivity)
 
-                # Update with damping
-                optimality_ratio = densities[i] * (Be^damping)
+            # Update with damping
+            optimality_ratio = densities[i] * (Be^damping)
 
-                # Apply move limits and bounds
-                new_densities[i] = max(
-                    x_min,
-                    max(
-                        densities[i] - move_limit,
-                        min(1.0, min(densities[i] + move_limit, optimality_ratio)),
-                    ),
-                )
-            end
+            # Apply move limits and bounds
+            new_densities[i] = max(
+                x_min,
+                max(
+                    densities[i] - move_limit,
+                    min(1.0, min(densities[i] + move_limit, optimality_ratio)),
+                ),
+            )
         end
 
         # Check volume constraint

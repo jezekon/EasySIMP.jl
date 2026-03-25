@@ -425,7 +425,7 @@ function simp_optimize(
                         copy(energy_history),
                         copy(volume_history),
                     )
-                    cp_results_data = create_results_data(grid, dh, cp_result)
+                    cp_results_data = create_results_data(grid, dh, cellvalues, cp_result)
                     PostProcessing.export_main_results(
                         cp_results_data,
                         joinpath(params.export_path, "final_results_$(tol_str)tol"),
@@ -452,7 +452,7 @@ function simp_optimize(
                     copy(energy_history),
                     copy(volume_history),
                 )
-                results_data = create_results_data(grid, dh, intermediate_result)
+                results_data = create_results_data(grid, dh, cellvalues, intermediate_result)
                 export_results_vtu(
                     results_data,
                     joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
