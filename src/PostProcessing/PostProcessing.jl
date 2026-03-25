@@ -17,6 +17,7 @@ Container for optimization results to be exported.
 struct ResultsData
     grid::Grid
     dh::DofHandler
+    cellvalues
     densities::Vector{Float64}
     displacements::Vector{Float64}
     von_mises_stress::Vector{Float64}
@@ -30,16 +31,18 @@ struct ResultsData
 end
 
 """
-    create_results_data(grid, dh, optimization_result)
+    create_results_data(grid, dh, cellvalues, opt_result)
 
-Create ResultsData from optimization results.
+Create ResultsData from optimization results. The `cellvalues` are stored for
+post-processing computations such as element strain energy.
 """
-function create_results_data(grid::Grid, dh::DofHandler, opt_result)
+function create_results_data(grid::Grid, dh::DofHandler, cellvalues, opt_result)
     von_mises = calculate_von_mises_stresses(opt_result.stresses)
 
     return ResultsData(
         grid,
         dh,
+        cellvalues,
         opt_result.densities,
         opt_result.displacements,
         von_mises,
@@ -167,14 +170,27 @@ end
 Calculate energy contribution from each element.
 """
 function calculate_element_energy(results_data::ResultsData)
+    dh = results_data.dh
+    u = results_data.displacements
+    cellvalues = results_data.cellvalues
     n_cells = getncells(results_data.grid)
     element_energy = zeros(n_cells)
 
-    total_volume = sum(results_data.densities)
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        cell_dofs = celldofs(cell)
+        u_cell = u[cell_dofs]
+        reinit!(cellvalues, cell)
 
-    for i = 1:n_cells
-        element_energy[i] =
-            results_data.densities[i] * results_data.von_mises_stress[i] / total_volume
+        W = 0.0
+        for q_point in 1:getnquadpoints(cellvalues)
+            dΩ = getdetJdV(cellvalues, q_point)
+            grad_u = function_gradient(cellvalues, q_point, u_cell)
+            ε = symmetric(grad_u)
+            σ = results_data.stress_tensors[cell_id][q_point]
+            W += (σ ⊡ ε) * dΩ
+        end
+        element_energy[cell_id] = 0.5 * W
     end
 
     return element_energy

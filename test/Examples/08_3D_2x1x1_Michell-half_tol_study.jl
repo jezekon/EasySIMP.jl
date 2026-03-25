@@ -218,7 +218,7 @@ for tol in tolerance_values
     elapsed = time() - t_start
 
     # Export final results
-    results_data = create_results_data(grid, dh, results)
+    results_data = create_results_data(grid, dh, cellvalues, results)
     export_results_vtu(results_data, joinpath(results_dir, "final"))
 
     vol_frac = results.volume / total_mesh_volume

@@ -247,7 +247,7 @@ for tol in tolerance_values
     elapsed = time() - t_start
 
     # Export final results
-    results_data = create_results_data(grid, dh, results)
+    results_data = create_results_data(grid, dh, cellvalues, results)
     export_results_vtu(
         results_data,
         joinpath(results_dir, "3D_2x1x1_4Legs_$(tol_str)tol_r2.0-SIMP"),
