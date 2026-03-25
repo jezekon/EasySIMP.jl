@@ -1,13 +1,10 @@
-# src/Optimization/LoadConditions.jl
+# src/FiniteElementAnalysis/LoadConditions.jl
 """
 LoadConditions.jl
 
 Abstract load condition types for SIMP topology optimization.
 Supports point loads, nodal traction, and surface traction with position-dependent functions.
 """
-
-export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
-export apply_load_condition!
 
 # =============================================================================
 # ABSTRACT BASE TYPE

@@ -5,26 +5,34 @@ Implementation of Optimality Criteria method for SIMP topology optimization.
 Based on Sigmund (2001) 99-line topology optimization code.
 """
 
+using Statistics: median
+
 export optimality_criteria_update, check_sensitivity_health
 
 """
     check_sensitivity_health(sensitivities)
 
 Check if sensitivities are in a reasonable range for OC algorithm.
+Uses relative thresholds (median-based) instead of absolute values.
 Warns user only if problems are detected.
 """
 function check_sensitivity_health(sensitivities::Vector{Float64})
-    max_sens = maximum(abs.(sensitivities))
-    min_sens = minimum(abs.(sensitivities[sensitivities .< 0]))  # Only negative sensitivities
-
-    if max_sens < 1e-8
-        @warn "Sensitivities too small (max: $max_sens). Consider increasing force magnitude or reducing material stiffness."
-        return false
-    elseif max_sens > 1e2
-        @warn "Sensitivities too large (max: $max_sens). Consider reducing force magnitude or increasing material stiffness."
-        return false
-    elseif count(s -> s < 0, sensitivities) < length(sensitivities) * 0.5
+    if count(s -> s < 0, sensitivities) < length(sensitivities) * 0.5
         @warn "Less than 50% of sensitivities are negative. Check if energy sensitivities are computed correctly."
+        return false
+    end
+
+    abs_sens = abs.(sensitivities)
+    med = median(abs_sens)
+
+    if med < eps(Float64)
+        @warn "Sensitivities are effectively zero (median: $med)."
+        return false
+    end
+
+    range_ratio = maximum(abs_sens) / max(med, eps(Float64))
+    if range_ratio > 1e8
+        @warn "Sensitivity range too large (max/median: $(range_ratio)). Check problem scaling."
         return false
     end
 
@@ -128,23 +136,3 @@ function optimality_criteria_update(
     return new_densities, λ_mid
 end
 
-"""
-    check_volume_constraint(densities, target_volume_fraction, total_volume, element_volumes)
-
-Check volume constraint satisfaction.
-Returns volume error and current volume fraction.
-"""
-function check_volume_constraint(
-    densities::Vector{Float64},
-    target_volume_fraction::Float64,
-    total_volume::Float64,
-    element_volumes::Vector{Float64},
-)
-    current_volume = dot(densities, element_volumes)
-    target_volume = target_volume_fraction * total_volume
-    current_volume_fraction = current_volume / total_volume
-
-    volume_error = current_volume - target_volume
-
-    return volume_error, current_volume_fraction
-end
