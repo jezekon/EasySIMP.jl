@@ -279,7 +279,7 @@ function simp_optimize(
         end
 
         # Assemble system with in-place operations
-        assemble_stiffness_matrix_simp_inplace!(
+        assemble_stiffness_matrix_simp!(
             K,
             f,
             dh,
@@ -487,7 +487,7 @@ function simp_optimize(
         final_physical_densities = densities
     end
 
-    assemble_stiffness_matrix_simp_inplace!(
+    assemble_stiffness_matrix_simp!(
         K,
         f,
         dh,
@@ -583,11 +583,11 @@ function initialize_element_cache(dh, cellvalues, material_model, n_cells)
 end
 
 """
-    assemble_stiffness_matrix_simp_inplace!(K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer)
+    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer)
 
 Assemble global stiffness matrix with in-place operations to avoid allocations.
 """
-function assemble_stiffness_matrix_simp_inplace!(
+function assemble_stiffness_matrix_simp!(
     K,
     f,
     dh,
@@ -599,7 +599,7 @@ function assemble_stiffness_matrix_simp_inplace!(
     fe_buffer,
 )
     if cache !== nothing
-        assemble_with_cache_inplace!(
+        assemble_with_cache!(
             K,
             f,
             dh,
@@ -610,7 +610,7 @@ function assemble_stiffness_matrix_simp_inplace!(
             fe_buffer,
         )
     else
-        assemble_variable_material_inplace!(
+        assemble_variable_material!(
             K,
             f,
             dh,
@@ -624,11 +624,11 @@ function assemble_stiffness_matrix_simp_inplace!(
 end
 
 """
-    assemble_with_cache_inplace!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
+    assemble_with_cache!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
 
 Assembly using cached unit matrices with in-place scaling.
 """
-function assemble_with_cache_inplace!(
+function assemble_with_cache!(
     K,
     f,
     dh,
@@ -665,11 +665,11 @@ function assemble_with_cache_inplace!(
 end
 
 """
-    assemble_variable_material_inplace!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
+    assemble_variable_material!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
 
 Assembly for variable material properties without caching.
 """
-function assemble_variable_material_inplace!(
+function assemble_variable_material!(
     K,
     f,
     dh,
@@ -693,44 +693,6 @@ function assemble_variable_material_inplace!(
         assemble_element_stiffness_matrix!(ke_buffer, cellvalues, λ, μ)
         assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
     end
-end
-
-"""
-    assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
-
-Compute element stiffness matrix in-place.
-"""
-function assemble_element_stiffness_matrix!(ke::Matrix{Float64}, cellvalues, λ, μ)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    fill!(ke, 0.0)
-
-    for q_point = 1:getnquadpoints(cellvalues)
-        dΩ = getdetJdV(cellvalues, q_point)
-
-        for i = 1:n_basefuncs
-            ∇Ni = shape_gradient(cellvalues, q_point, i)
-            εi = symmetric(∇Ni)
-
-            for j = 1:n_basefuncs
-                ∇Nj = shape_gradient(cellvalues, q_point, j)
-                εj = symmetric(∇Nj)
-                σ = λ * tr(εj) * one(εj) + 2μ * εj
-                ke[i, j] += (εi ⊡ σ) * dΩ
-            end
-        end
-    end
-end
-
-"""
-    assemble_element_stiffness_matrix(cellvalues, λ, μ)
-
-Compute element stiffness matrix (allocating version for cache initialization).
-"""
-function assemble_element_stiffness_matrix(cellvalues, λ, μ)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    ke = zeros(n_basefuncs, n_basefuncs)
-    assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
-    return ke
 end
 
 # =============================================================================
