@@ -59,9 +59,6 @@ export apply_force!, apply_surface_traction!, get_boundary_facets
 export select_nodes_by_plane,
     select_nodes_by_circle, select_nodes_by_cylinder, select_nodes_by_arc
 
-# Solver
-export solve_system
-
 # Optimization
 export OptimizationParameters, simp_optimize
 

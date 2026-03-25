@@ -4,7 +4,6 @@ authors = ["jezekon <78500480+jezekon@users.noreply.github.com>"]
 version = "0.1.0"
 
 [deps]
-AbaqusReader = "bc6b9049-e460-56d6-94b4-a597b2c0390d"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Ferrite = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
@@ -14,11 +13,11 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ReadVTK = "dc215faf-f008-4882-a9f7-a79a826fadc3"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
-AbaqusReader = "0.2.6"
 Ferrite = "1.1.0"
 FerriteGmsh = "1.2.1"
 NearestNeighbors = "0.4"
