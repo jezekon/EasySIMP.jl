@@ -1,5 +1,5 @@
 """
-    verify_sensitivities(grid, dh, cellvalues, material_model, densities, u; 
+    verify_sensitivities(grid, dh, cellvalues, densities, u, E0, Emin, ν, p;
                         perturbation=1e-6)
 
 Verify analytical sensitivities using finite differences (for debugging).
@@ -15,21 +15,27 @@ function verify_sensitivities(
     grid::Grid,
     dh::DofHandler,
     cellvalues,
-    material_model,
     densities::Vector{Float64},
-    u::Vector{Float64};
+    u::Vector{Float64},
+    E0::Float64,
+    Emin::Float64,
+    ν::Float64,
+    p::Float64;
     perturbation::Float64 = 1e-6,
 )
     n_cells = getncells(grid)
 
     # Calculate analytical sensitivities
-    analytical = calculate_sensitivities(grid, dh, cellvalues, material_model, densities, u)
+    analytical = calculate_sensitivities(grid, dh, cellvalues, densities, u, E0, Emin, ν, p)
 
     # Calculate finite difference sensitivities
     finite_diff = zeros(n_cells)
 
+    # Create material model for assembly
+    material_model = create_simp_material_model(E0, ν, Emin, p)
+
     # Calculate baseline energy
-    c0 = calculate_energy(grid, dh, cellvalues, material_model, densities, u)
+    c0 = calculate_energy(dh, cellvalues, material_model, densities, u)
 
     for i = 1:min(10, n_cells)  # Only check first 10 elements for efficiency
         # Perturb density
@@ -48,8 +54,7 @@ function verify_sensitivities(
             densities_pert,
         )
         u_pert = K_pert \ f_pert
-        c_pert =
-            calculate_energy(grid, dh, cellvalues, material_model, densities_pert, u_pert)
+        c_pert = calculate_energy(dh, cellvalues, material_model, densities_pert, u_pert)
 
         # Finite difference approximation
         finite_diff[i] = (c_pert - c0) / perturbation
@@ -73,21 +78,17 @@ function verify_sensitivities(
 end
 
 """
-    calculate_energy(grid, dh, cellvalues, material_model, densities, u)
+    calculate_energy(dh, cellvalues, material_model, densities, u)
 
 Helper function to calculate total energy.
 """
 function calculate_energy(
-    grid::Grid,
     dh::DofHandler,
     cellvalues,
     material_model,
     densities::Vector{Float64},
     u::Vector{Float64},
 )
-    # Simple calculation: c = 0.5 * u^T * K * u
-    # But we need to reassemble K for given densities
-
     K = allocate_matrix(dh)
     f = zeros(ndofs(dh))
     assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities)
