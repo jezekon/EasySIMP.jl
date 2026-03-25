@@ -17,12 +17,6 @@ using EasySIMP.Utils
         @testset "Cantilever Beam SIMP (fixed)" begin
             print_info("Running Cantilever Beam SIMP (fixed")
 
-            # Import mesh
-            # grid = import_mesh("../data/cantilever_beam.vtu")
-            # print_success(
-            #     "Mesh imported: $(getncells(grid)) elements, $(getnnodes(grid)) nodes",
-            # )
-
             grid = generate_grid(
                 Hexahedron,
                 (60, 20, 4),

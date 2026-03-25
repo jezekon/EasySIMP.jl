@@ -229,7 +229,6 @@ function simp_optimize(
     volume_cellvalues = create_volume_quadrature(grid)
     element_volumes = calculate_element_volumes(grid, volume_cellvalues)
     total_volume = sum(element_volumes)
-    total_mesh_volume = calculate_volume(grid)
 
     print_data("Total mesh volume: $total_volume")
 
@@ -435,8 +434,13 @@ function simp_optimize(
         if params.export_interval > 0 && iteration % params.export_interval == 0
             if !isempty(params.export_path)
                 # Reuse existing K, f, u - no extra allocation
-                stress_field_temp, _, _ =
-                    calculate_stresses_simp(u, dh, cellvalues, material_model, physical_densities)
+                stress_field_temp, _, _ = calculate_stresses_simp(
+                    u,
+                    dh,
+                    cellvalues,
+                    material_model,
+                    physical_densities,
+                )
                 intermediate_result = OptimizationResult(
                     copy(physical_densities),
                     copy(u),
@@ -448,7 +452,8 @@ function simp_optimize(
                     copy(energy_history),
                     copy(volume_history),
                 )
-                results_data = create_results_data(grid, dh, cellvalues, intermediate_result)
+                results_data =
+                    create_results_data(grid, dh, cellvalues, intermediate_result)
                 export_results_vtu(
                     results_data,
                     joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
