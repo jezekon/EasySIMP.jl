@@ -17,6 +17,7 @@ export FilterCache, create_filter_cache
 
 # Include submodules
 include("OptimalityCriteria.jl")
+include("FilterCommon.jl")
 include("SensitivityFilter.jl")
 include("DensityFilter.jl")
 include("SensitivityAnalysis.jl")
