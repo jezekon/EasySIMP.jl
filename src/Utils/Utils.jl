@@ -6,6 +6,26 @@ include("TerminalStyle.jl")
 export print_error, print_warning, print_info, print_success, print_data
 
 using Ferrite
+using LinearAlgebra: dot
+
+"""
+    calculate_volume(element_volumes::Vector{Float64}, densities::Vector{Float64})
+
+Calculate weighted volume as dot(element_volumes, densities).
+Fast path for use inside the optimization loop where element_volumes are pre-computed.
+"""
+function calculate_volume(element_volumes::Vector{Float64}, densities::Vector{Float64})
+    return dot(element_volumes, densities)
+end
+
+"""
+    calculate_volume(element_volumes::Vector{Float64})
+
+Calculate total volume as sum of pre-computed element volumes.
+"""
+function calculate_volume(element_volumes::Vector{Float64})
+    return sum(element_volumes)
+end
 
 """
     calculate_volume(grid::Ferrite.Grid, density_data::Union{Vector{Float64}, Nothing}=nothing)
