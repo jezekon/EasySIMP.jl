@@ -208,9 +208,10 @@ function assemble_element_stiffness_matrix(cellvalues, λ, μ)
 end
 
 """
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
+    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data)
 
 Assemble global stiffness matrix using SIMP material model.
+Simple allocating version for one-off assembly (tests, initial setup).
 
 # Arguments
 - `K`: Global stiffness matrix (modified in-place)
@@ -219,34 +220,8 @@ Assemble global stiffness matrix using SIMP material model.
 - `cellvalues`: CellValues for interpolation and integration
 - `material_model`: Function mapping density to (λ, μ)
 - `density_data`: Vector of density values for each cell
-- `cache`: Optional Dict for caching unit element matrices
 """
-function assemble_stiffness_matrix_simp!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    density_data,
-    cache = nothing,
-)
-    if cache !== nothing && haskey(cache, :unit_matrices)
-        assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
-    else
-        assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
-
-        if cache !== nothing
-            initialize_cache(cache, dh, cellvalues, material_model, length(density_data))
-        end
-    end
-end
-
-"""
-    assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
-
-Assembly for variable material properties without caching.
-"""
-function assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
+function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data)
     n_basefuncs = getnbasefunctions(cellvalues)
     ke = zeros(n_basefuncs, n_basefuncs)
     fe = zeros(n_basefuncs)
@@ -255,75 +230,11 @@ function assemble_variable_material(K, f, dh, cellvalues, material_model, densit
 
     for cell in CellIterator(dh)
         reinit!(cellvalues, cell)
-
-        cell_id = cellid(cell)
-        density = density_data[cell_id]
+        density = density_data[cellid(cell)]
         λ, μ = material_model(density)
-
         assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
         assemble!(assembler, celldofs(cell), ke, fe)
     end
-
-    println("Stiffness matrix assembled with variable material properties")
-end
-
-"""
-    assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
-
-Assembly using cached unit matrices for improved performance.
-"""
-function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    ke_buffer = zeros(n_basefuncs, n_basefuncs)
-    fe = zeros(n_basefuncs)
-    unit_matrices = cache[:unit_matrices]
-    λ_unit = cache[:λ_unit]
-    
-    fill!(K.nzval, 0.0)
-    assembler = start_assemble(K, f)
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        density = density_data[cell_id]
-        
-        λ_current, _ = material_model(density)
-        scaling_factor = λ_current / λ_unit
-        
-        # In-place scaling
-        unit_ke = unit_matrices[cell_id]
-        @inbounds for j in 1:size(ke_buffer, 2)
-            for i in 1:size(ke_buffer, 1)
-                ke_buffer[i, j] = scaling_factor * unit_ke[i, j]
-            end
-        end
-        
-        assemble!(assembler, celldofs(cell), ke_buffer, fe)
-    end
-end
-
-"""
-    initialize_cache(cache, dh, cellvalues, material_model, n_cells)
-
-Initialize element stiffness matrix cache with unit matrices.
-"""
-function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
-    λ_unit, μ_unit = material_model(1.0)
-    
-    print_info("Computing element stiffness matrix cache...")
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        reinit!(cellvalues, cell)
-        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
-        unit_matrices[cell_id] = ke_unit
-    end
-
-    cache[:unit_matrices] = unit_matrices
-    cache[:λ_unit] = λ_unit
-    cache[:μ_unit] = μ_unit
-    print_success("Element cache initialized: $(n_cells) unit matrices")
 end
 
 # =============================================================================
