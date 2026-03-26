@@ -74,7 +74,9 @@ function optimality_criteria_update(
     total_volume::Float64,
     element_volumes::Vector{Float64},
     move_limit::Float64 = 0.2,
-    damping::Float64 = 0.5,
+    damping::Float64 = 0.5;
+    filter_cache::Union{FilterCache, Nothing} = nothing,
+    use_density_filter::Bool = false,
 )
     # Check sensitivity health (warns only if problems detected)
     check_sensitivity_health(sensitivities)
@@ -90,6 +92,7 @@ function optimality_criteria_update(
     max_iter = 200
 
     new_densities = copy(densities)
+    filtered_new_densities = use_density_filter ? zeros(n_elements) : new_densities
 
     λ_mid = NaN
     for iter = 1:max_iter
@@ -113,8 +116,13 @@ function optimality_criteria_update(
             )
         end
 
-        # Check volume constraint
-        current_volume = dot(new_densities, element_volumes)
+        # Apply density filter before volume check (physical densities for constraint)
+        if use_density_filter
+            apply_density_filter_cached!(filtered_new_densities, filter_cache, new_densities)
+        end
+
+        # Check volume constraint on physical densities
+        current_volume = dot(filtered_new_densities, element_volumes)
         volume_error = current_volume - target_volume
 
         if abs(volume_error) < tolerance

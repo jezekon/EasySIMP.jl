@@ -16,10 +16,10 @@ export simp_optimize, OptimizationParameters, OptimizationResult
 export FilterCache, create_filter_cache
 
 # Include submodules
-include("OptimalityCriteria.jl")
 include("FilterCommon.jl")
 include("SensitivityFilter.jl")
 include("DensityFilter.jl")
+include("OptimalityCriteria.jl")
 include("SensitivityAnalysis.jl")
 include("OptimizationLogger.jl")
 
@@ -365,7 +365,9 @@ function simp_optimize(
             total_volume,
             element_volumes,
             params.move_limit,
-            params.damping,
+            params.damping;
+            filter_cache = filter_cache,
+            use_density_filter = use_density_filter,
         )
 
         # Check convergence
