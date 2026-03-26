@@ -40,14 +40,17 @@ function check_sensitivity_health(sensitivities::Vector{Float64})
 end
 
 """
-    optimality_criteria_update(densities, sensitivities, target_volume_fraction, 
-                              total_volume, element_volumes, move_limit, damping)
+    optimality_criteria_update(densities, sensitivities, volume_sensitivities,
+                              target_volume_fraction, total_volume, element_volumes,
+                              move_limit, damping)
 
 Update design variables using the Optimality Criteria method.
 
 # Arguments
 - `densities`: Current density distribution
-- `sensitivities`: Sensitivity of objective function w.r.t. densities  
+- `sensitivities`: Sensitivity of objective function w.r.t. design densities
+- `volume_sensitivities`: Sensitivity of volume constraint w.r.t. design densities
+  (chain-rule transformed for density filter, raw V_i/V_total for sensitivity filter)
 - `target_volume_fraction`: Target volume fraction
 - `total_volume`: Total volume of the design domain
 - `element_volumes`: Volume of each element
@@ -55,7 +58,7 @@ Update design variables using the Optimality Criteria method.
 - `damping`: Damping coefficient (default: 0.5)
 
 # Returns
-- `(new_densities, lagrange_multiplier)`: Updated densities and final λ from
+- `(new_densities, lagrange_multiplier)`: Updated densities and final λ
 
 # Method
 Uses Sigmund's OC formula:
@@ -66,6 +69,7 @@ where λ is found by bisection to satisfy the volume constraint.
 function optimality_criteria_update(
     densities::Vector{Float64},
     sensitivities::Vector{Float64},
+    volume_sensitivities::Vector{Float64},
     target_volume_fraction::Float64,
     total_volume::Float64,
     element_volumes::Vector{Float64},
@@ -93,11 +97,8 @@ function optimality_criteria_update(
 
         # Update densities using Sigmund's OC formula
         for i = 1:n_elements
-            # Volume sensitivity (normalized)
-            volume_sensitivity = element_volumes[i] / total_volume
-
             # Optimality ratio: Be = |dc/dx| / (λ * dV/dx)
-            Be = abs(sensitivities[i]) / (λ_mid * volume_sensitivity)
+            Be = abs(sensitivities[i]) / (λ_mid * volume_sensitivities[i])
 
             # Update with damping
             optimality_ratio = densities[i] * (Be^damping)

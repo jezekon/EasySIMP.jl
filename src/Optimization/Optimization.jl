@@ -212,6 +212,7 @@ function simp_optimize(
     # Sensitivity vectors - allocated ONCE
     sensitivities = zeros(n_cells)
     filtered_sensitivities = zeros(n_cells)
+    filtered_volume_sensitivities = zeros(n_cells)
 
     # Assembly buffer for in-place operations
     ke_buffer = zeros(n_basefuncs, n_basefuncs)
@@ -236,6 +237,15 @@ function simp_optimize(
     # Create FilterCache - KD-tree built ONCE
     filter_cache = create_filter_cache(grid, params.filter_radius, element_volumes)
     print_filter_info(grid, params.filter_radius, "auto")
+
+    # Volume sensitivities: chain-rule transform once (geometry-only, constant across iterations)
+    volume_sens_physical = element_volumes ./ total_volume
+    if use_density_filter
+        apply_density_filter_chain_rule_cached!(
+            filtered_volume_sensitivities, filter_cache, volume_sens_physical)
+    else
+        copyto!(filtered_volume_sensitivities, volume_sens_physical)
+    end
 
     # Create element stiffness cache if enabled
     cache =
@@ -350,6 +360,7 @@ function simp_optimize(
         densities, lagrange_multiplier = optimality_criteria_update(
             densities,
             filtered_sensitivities,
+            filtered_volume_sensitivities,
             params.volume_fraction,
             total_volume,
             element_volumes,
