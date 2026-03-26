@@ -127,7 +127,7 @@ results = simp_optimize(
 )
 
 # 7. Export results
-results_data = create_results_data(grid, dh, results)
+results_data = create_results_data(grid, dh, cellvalues, results)
 export_results_vtu(results_data, "cantilever_beam")
 ```
 

@@ -12,17 +12,14 @@ using ..PostProcessing
 # Export main functions
 export simp_optimize, OptimizationParameters, OptimizationResult
 
-# Export load condition types
-export AbstractLoadCondition, PointLoad, SurfaceTractionLoad
-
 # Export filter cache
 export FilterCache, create_filter_cache
 
 # Include submodules
-include("LoadConditions.jl")
-include("ProgressTable.jl")
-include("OptimalityCriteria.jl")
+include("FilterCommon.jl")
 include("SensitivityFilter.jl")
+include("DensityFilter.jl")
+include("OptimalityCriteria.jl")
 include("SensitivityAnalysis.jl")
 include("OptimizationLogger.jl")
 
@@ -215,6 +212,7 @@ function simp_optimize(
     # Sensitivity vectors - allocated ONCE
     sensitivities = zeros(n_cells)
     filtered_sensitivities = zeros(n_cells)
+    filtered_volume_sensitivities = zeros(n_cells)
 
     # Assembly buffer for in-place operations
     ke_buffer = zeros(n_basefuncs, n_basefuncs)
@@ -233,13 +231,21 @@ function simp_optimize(
     volume_cellvalues = create_volume_quadrature(grid)
     element_volumes = calculate_element_volumes(grid, volume_cellvalues)
     total_volume = sum(element_volumes)
-    total_mesh_volume = calculate_volume(grid)
 
     print_data("Total mesh volume: $total_volume")
 
     # Create FilterCache - KD-tree built ONCE
-    filter_cache = create_filter_cache(grid, params.filter_radius)
+    filter_cache = create_filter_cache(grid, params.filter_radius, element_volumes)
     print_filter_info(grid, params.filter_radius, "auto")
+
+    # Volume sensitivities: chain-rule transform once (geometry-only, constant across iterations)
+    volume_sens_physical = element_volumes ./ total_volume
+    if use_density_filter
+        apply_density_filter_chain_rule_cached!(
+            filtered_volume_sensitivities, filter_cache, volume_sens_physical)
+    else
+        copyto!(filtered_volume_sensitivities, volume_sens_physical)
+    end
 
     # Create element stiffness cache if enabled
     cache =
@@ -272,14 +278,14 @@ function simp_optimize(
 
         # Density filter: compute physical densities before assembly
         if use_density_filter
-            apply_density_filter_cached!(filtered_densities, filter_cache, densities, element_volumes)
+            apply_density_filter_cached!(filtered_densities, filter_cache, densities)
             physical_densities = filtered_densities
         else
             physical_densities = densities
         end
 
         # Assemble system with in-place operations
-        assemble_stiffness_matrix_simp_inplace!(
+        assemble_stiffness_matrix_simp!(
             K,
             f,
             dh,
@@ -339,7 +345,6 @@ function simp_optimize(
                 filtered_sensitivities,
                 filter_cache,
                 sensitivities,
-                element_volumes,
             )
         else
             # Sigmund's sensitivity filter
@@ -355,11 +360,14 @@ function simp_optimize(
         densities, lagrange_multiplier = optimality_criteria_update(
             densities,
             filtered_sensitivities,
+            filtered_volume_sensitivities,
             params.volume_fraction,
             total_volume,
             element_volumes,
             params.move_limit,
-            params.damping,
+            params.damping;
+            filter_cache = filter_cache,
+            use_density_filter = use_density_filter,
         )
 
         # Check convergence
@@ -426,7 +434,7 @@ function simp_optimize(
                         copy(energy_history),
                         copy(volume_history),
                     )
-                    cp_results_data = create_results_data(grid, dh, cp_result)
+                    cp_results_data = create_results_data(grid, dh, cellvalues, cp_result)
                     PostProcessing.export_main_results(
                         cp_results_data,
                         joinpath(params.export_path, "final_results_$(tol_str)tol"),
@@ -440,8 +448,13 @@ function simp_optimize(
         if params.export_interval > 0 && iteration % params.export_interval == 0
             if !isempty(params.export_path)
                 # Reuse existing K, f, u - no extra allocation
-                stress_field_temp, _, _ =
-                    calculate_stresses_simp(u, dh, cellvalues, material_model, physical_densities)
+                stress_field_temp, _, _ = calculate_stresses_simp(
+                    u,
+                    dh,
+                    cellvalues,
+                    material_model,
+                    physical_densities,
+                )
                 intermediate_result = OptimizationResult(
                     copy(physical_densities),
                     copy(u),
@@ -453,7 +466,8 @@ function simp_optimize(
                     copy(energy_history),
                     copy(volume_history),
                 )
-                results_data = create_results_data(grid, dh, intermediate_result)
+                results_data =
+                    create_results_data(grid, dh, cellvalues, intermediate_result)
                 export_results_vtu(
                     results_data,
                     joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
@@ -482,13 +496,13 @@ function simp_optimize(
 
     # Compute final physical densities
     if use_density_filter
-        apply_density_filter_cached!(filtered_densities, filter_cache, densities, element_volumes)
+        apply_density_filter_cached!(filtered_densities, filter_cache, densities)
         final_physical_densities = filtered_densities
     else
         final_physical_densities = densities
     end
 
-    assemble_stiffness_matrix_simp_inplace!(
+    assemble_stiffness_matrix_simp!(
         K,
         f,
         dh,
@@ -551,190 +565,6 @@ function simp_optimize(
 end
 
 # =============================================================================
-# IN-PLACE ASSEMBLY FUNCTIONS
-# =============================================================================
-
-"""
-    initialize_element_cache(dh, cellvalues, material_model, n_cells)
-
-Initialize element stiffness matrix cache with unit matrices.
-"""
-function initialize_element_cache(dh, cellvalues, material_model, n_cells)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
-    λ_unit, μ_unit = material_model(1.0)
-
-    print_info("Computing element stiffness matrix cache...")
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        reinit!(cellvalues, cell)
-        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
-        unit_matrices[cell_id] = ke_unit
-    end
-
-    # Store unit material parameters for scaling
-    cache = Dict{Symbol,Any}()
-    cache[:unit_matrices] = unit_matrices
-    cache[:λ_unit] = λ_unit
-    cache[:μ_unit] = μ_unit
-
-    print_success("Element cache initialized: $(n_cells) unit matrices")
-    return cache
-end
-
-"""
-    assemble_stiffness_matrix_simp_inplace!(K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer)
-
-Assemble global stiffness matrix with in-place operations to avoid allocations.
-"""
-function assemble_stiffness_matrix_simp_inplace!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    densities,
-    cache,
-    ke_buffer,
-    fe_buffer,
-)
-    if cache !== nothing
-        assemble_with_cache_inplace!(
-            K,
-            f,
-            dh,
-            material_model,
-            densities,
-            cache,
-            ke_buffer,
-            fe_buffer,
-        )
-    else
-        assemble_variable_material_inplace!(
-            K,
-            f,
-            dh,
-            cellvalues,
-            material_model,
-            densities,
-            ke_buffer,
-            fe_buffer,
-        )
-    end
-end
-
-"""
-    assemble_with_cache_inplace!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
-
-Assembly using cached unit matrices with in-place scaling.
-"""
-function assemble_with_cache_inplace!(
-    K,
-    f,
-    dh,
-    material_model,
-    densities,
-    cache,
-    ke_buffer,
-    fe_buffer,
-)
-    unit_matrices = cache[:unit_matrices]
-    λ_unit = cache[:λ_unit]
-
-    fill!(fe_buffer, 0.0)
-    assembler = start_assemble(K, f)
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        density = densities[cell_id]
-
-        # Get current material parameters
-        λ_current, _ = material_model(density)
-        scaling_factor = λ_current / λ_unit
-
-        # In-place scaling: ke_buffer = scaling_factor * unit_matrix
-        unit_ke = unit_matrices[cell_id]
-        @inbounds for j = 1:size(ke_buffer, 2)
-            for i = 1:size(ke_buffer, 1)
-                ke_buffer[i, j] = scaling_factor * unit_ke[i, j]
-            end
-        end
-
-        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
-    end
-end
-
-"""
-    assemble_variable_material_inplace!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
-
-Assembly for variable material properties without caching.
-"""
-function assemble_variable_material_inplace!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    densities,
-    ke_buffer,
-    fe_buffer,
-)
-    fill!(fe_buffer, 0.0)
-    assembler = start_assemble(K, f)
-
-    for cell in CellIterator(dh)
-        reinit!(cellvalues, cell)
-
-        cell_id = cellid(cell)
-        density = densities[cell_id]
-        λ, μ = material_model(density)
-
-        # Compute element stiffness into buffer
-        assemble_element_stiffness_matrix!(ke_buffer, cellvalues, λ, μ)
-        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
-    end
-end
-
-"""
-    assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
-
-Compute element stiffness matrix in-place.
-"""
-function assemble_element_stiffness_matrix!(ke::Matrix{Float64}, cellvalues, λ, μ)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    fill!(ke, 0.0)
-
-    for q_point = 1:getnquadpoints(cellvalues)
-        dΩ = getdetJdV(cellvalues, q_point)
-
-        for i = 1:n_basefuncs
-            ∇Ni = shape_gradient(cellvalues, q_point, i)
-            εi = symmetric(∇Ni)
-
-            for j = 1:n_basefuncs
-                ∇Nj = shape_gradient(cellvalues, q_point, j)
-                εj = symmetric(∇Nj)
-                σ = λ * tr(εj) * one(εj) + 2μ * εj
-                ke[i, j] += (εi ⊡ σ) * dΩ
-            end
-        end
-    end
-end
-
-"""
-    assemble_element_stiffness_matrix(cellvalues, λ, μ)
-
-Compute element stiffness matrix (allocating version for cache initialization).
-"""
-function assemble_element_stiffness_matrix(cellvalues, λ, μ)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    ke = zeros(n_basefuncs, n_basefuncs)
-    assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
-    return ke
-end
-
-# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -751,57 +581,6 @@ function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
     for bc in boundary_conditions
         apply!(K, f, bc)
     end
-end
-
-"""
-    calculate_element_volumes(grid, cellvalues)
-
-Calculate volume of each element in the grid.
-"""
-function calculate_element_volumes(grid::Grid, cellvalues)
-    n_cells = getncells(grid)
-    element_volumes = zeros(n_cells)
-
-    for cell_idx = 1:n_cells
-        coords = getcoordinates(grid, cell_idx)
-        reinit!(cellvalues, coords)
-
-        volume = 0.0
-        for q_point = 1:getnquadpoints(cellvalues)
-            dΩ = getdetJdV(cellvalues, q_point)
-            volume += dΩ
-        end
-        element_volumes[cell_idx] = volume
-    end
-
-    return element_volumes
-end
-
-"""
-    create_volume_quadrature(grid)
-
-Create CellValues for volume calculation with 3rd order quadrature.
-"""
-function create_volume_quadrature(grid::Grid{dim}) where {dim}
-    cell = getcells(grid, 1)
-
-    if cell isa Hexahedron
-        ip = Lagrange{RefHexahedron,1}()
-        qr = QuadratureRule{RefHexahedron}(3)
-    elseif cell isa Tetrahedron
-        ip = Lagrange{RefTetrahedron,1}()
-        qr = QuadratureRule{RefTetrahedron}(3)
-    elseif cell isa Quadrilateral && dim == 2
-        ip = Lagrange{RefQuadrilateral,1}()
-        qr = QuadratureRule{RefQuadrilateral}(3)
-    elseif cell isa Triangle && dim == 2
-        ip = Lagrange{RefTriangle,1}()
-        qr = QuadratureRule{RefTriangle}(3)
-    else
-        error("Unsupported cell type: $(typeof(cell))")
-    end
-
-    return CellValues(qr, ip)
 end
 
 end # module

@@ -13,18 +13,23 @@ export create_material_model,
     apply_fixed_boundary!,
     apply_sliding_boundary!,
     apply_force!,
-    solve_system,
-    calculate_stresses,
     create_simp_material_model,
     assemble_stiffness_matrix_simp!,
     assemble_element_stiffness_matrix,
     assemble_element_stiffness_matrix!,
     calculate_stresses_simp,
-    solve_system_simp,
     get_boundary_facets,
-    apply_surface_traction!
+    apply_surface_traction!,
+    AbstractLoadCondition,
+    PointLoad,
+    SurfaceTractionLoad,
+    apply_load_condition!,
+    calculate_element_volumes,
+    create_volume_quadrature,
+    initialize_element_cache
 
 include("SelectNodesForBC.jl")
+include("LoadConditions.jl")
 export select_nodes_by_plane,
     select_nodes_by_circle, select_nodes_by_cylinder, select_nodes_by_arc
 
@@ -208,9 +213,10 @@ function assemble_element_stiffness_matrix(cellvalues, λ, μ)
 end
 
 """
-    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data, cache=nothing)
+    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data)
 
 Assemble global stiffness matrix using SIMP material model.
+Simple allocating version for one-off assembly (tests, initial setup).
 
 # Arguments
 - `K`: Global stiffness matrix (modified in-place)
@@ -219,34 +225,8 @@ Assemble global stiffness matrix using SIMP material model.
 - `cellvalues`: CellValues for interpolation and integration
 - `material_model`: Function mapping density to (λ, μ)
 - `density_data`: Vector of density values for each cell
-- `cache`: Optional Dict for caching unit element matrices
 """
-function assemble_stiffness_matrix_simp!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    density_data,
-    cache = nothing,
-)
-    if cache !== nothing && haskey(cache, :unit_matrices)
-        assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
-    else
-        assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
-
-        if cache !== nothing
-            initialize_cache(cache, dh, cellvalues, material_model, length(density_data))
-        end
-    end
-end
-
-"""
-    assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
-
-Assembly for variable material properties without caching.
-"""
-function assemble_variable_material(K, f, dh, cellvalues, material_model, density_data)
+function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data)
     n_basefuncs = getnbasefunctions(cellvalues)
     ke = zeros(n_basefuncs, n_basefuncs)
     fe = zeros(n_basefuncs)
@@ -255,75 +235,11 @@ function assemble_variable_material(K, f, dh, cellvalues, material_model, densit
 
     for cell in CellIterator(dh)
         reinit!(cellvalues, cell)
-
-        cell_id = cellid(cell)
-        density = density_data[cell_id]
+        density = density_data[cellid(cell)]
         λ, μ = material_model(density)
-
         assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
         assemble!(assembler, celldofs(cell), ke, fe)
     end
-
-    println("Stiffness matrix assembled with variable material properties")
-end
-
-"""
-    assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
-
-Assembly using cached unit matrices for improved performance.
-"""
-function assemble_with_cache(K, f, dh, cellvalues, material_model, density_data, cache)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    ke_buffer = zeros(n_basefuncs, n_basefuncs)
-    fe = zeros(n_basefuncs)
-    unit_matrices = cache[:unit_matrices]
-    λ_unit = cache[:λ_unit]
-    
-    fill!(K.nzval, 0.0)
-    assembler = start_assemble(K, f)
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        density = density_data[cell_id]
-        
-        λ_current, _ = material_model(density)
-        scaling_factor = λ_current / λ_unit
-        
-        # In-place scaling
-        unit_ke = unit_matrices[cell_id]
-        @inbounds for j in 1:size(ke_buffer, 2)
-            for i in 1:size(ke_buffer, 1)
-                ke_buffer[i, j] = scaling_factor * unit_ke[i, j]
-            end
-        end
-        
-        assemble!(assembler, celldofs(cell), ke_buffer, fe)
-    end
-end
-
-"""
-    initialize_cache(cache, dh, cellvalues, material_model, n_cells)
-
-Initialize element stiffness matrix cache with unit matrices.
-"""
-function initialize_cache(cache, dh, cellvalues, material_model, n_cells)
-    n_basefuncs = getnbasefunctions(cellvalues)
-    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
-    λ_unit, μ_unit = material_model(1.0)
-    
-    print_info("Computing element stiffness matrix cache...")
-
-    for cell in CellIterator(dh)
-        cell_id = cellid(cell)
-        reinit!(cellvalues, cell)
-        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
-        unit_matrices[cell_id] = ke_unit
-    end
-
-    cache[:unit_matrices] = unit_matrices
-    cache[:λ_unit] = λ_unit
-    cache[:μ_unit] = μ_unit
-    print_success("Element cache initialized: $(n_cells) unit matrices")
 end
 
 # =============================================================================
@@ -681,85 +597,204 @@ function calculate_stresses_simp(u, dh, cellvalues, material_model, density_data
 end
 
 # =============================================================================
-# SYSTEM SOLVER
+# CACHED ASSEMBLY FUNCTIONS
 # =============================================================================
 
 """
-    solve_system(K, f, dh, cellvalues, λ, μ, constraints...)
+    initialize_element_cache(dh, cellvalues, material_model, n_cells)
 
-Solve linear system with constant material properties.
+Initialize element stiffness matrix cache with unit matrices.
 """
-function solve_system(K, f, dh, cellvalues, λ, μ, constraints...)
-    for ch in constraints
-        apply_zero!(K, f, ch)
-    end
+function initialize_element_cache(dh, cellvalues, material_model, n_cells)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    unit_matrices = Vector{Matrix{Float64}}(undef, n_cells)
+    λ_unit, μ_unit = material_model(1.0)
 
-    println("Solving linear system...")
-
-    u = K \ f
-    deformation_energy = 0.5 * dot(u, K * u)
-    stress_field, max_von_mises, max_stress_cell = calculate_stresses(u, dh, cellvalues, λ, μ)
-
-    println("Analysis complete")
-    println("  Deformation energy: $deformation_energy J")
-    println("  Max von Mises stress: $max_von_mises at cell $max_stress_cell")
-
-    return u, deformation_energy, stress_field, max_von_mises, max_stress_cell
-end
-
-"""
-    solve_system_simp(K, f, dh, cellvalues, material_model, density_data, constraints...)
-
-Solve linear system with SIMP material model.
-"""
-function solve_system_simp(K, f, dh, cellvalues, material_model, density_data, constraints...)
-    for ch in constraints
-        apply_zero!(K, f, ch)
-    end
-
-    println("Solving linear system...")
-
-    u = K \ f
-    deformation_energy = 0.5 * dot(u, K * u)
-    stress_field, max_von_mises, max_stress_cell = calculate_stresses_simp(u, dh, cellvalues, material_model, density_data)
-
-    println("Analysis complete")
-    println("  Deformation energy: $deformation_energy J")
-    println("  Max von Mises stress: $max_von_mises at cell $max_stress_cell")
-
-    return u, deformation_energy, stress_field, max_von_mises, max_stress_cell
-end
-
-"""
-    calculate_stresses(u, dh, cellvalues, λ, μ)
-
-Calculate stress field with constant material properties.
-"""
-function calculate_stresses(u, dh, cellvalues, λ, μ)
-    stress_field = Dict{Int,Vector{SymmetricTensor{2,3,Float64}}}()
-    max_von_mises = 0.0
-    max_vm_cell_id = 0
+    print_info("Computing element stiffness matrix cache...")
 
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
-        cell_dofs = celldofs(cell)
-        u_cell = u[cell_dofs]
-
         reinit!(cellvalues, cell)
-
-        cell_stresses, avg_stress = calculate_stress_at_quadrature_points(u_cell, cellvalues, λ, μ)
-
-        cell_von_mises = sqrt(3/2 * (dev(avg_stress) ⊡ dev(avg_stress)))
-
-        if cell_von_mises > max_von_mises
-            max_von_mises = cell_von_mises
-            max_vm_cell_id = cell_id
-        end
-
-        stress_field[cell_id] = cell_stresses
+        ke_unit = assemble_element_stiffness_matrix(cellvalues, λ_unit, μ_unit)
+        unit_matrices[cell_id] = ke_unit
     end
 
-    return stress_field, max_von_mises, max_vm_cell_id
+    # Store unit material parameters for scaling
+    cache = Dict{Symbol,Any}()
+    cache[:unit_matrices] = unit_matrices
+    cache[:λ_unit] = λ_unit
+    cache[:μ_unit] = μ_unit
+
+    print_success("Element cache initialized: $(n_cells) unit matrices")
+    return cache
+end
+
+"""
+    assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, densities, cache, ke_buffer, fe_buffer)
+
+Assemble global stiffness matrix with in-place operations to avoid allocations.
+"""
+function assemble_stiffness_matrix_simp!(
+    K,
+    f,
+    dh,
+    cellvalues,
+    material_model,
+    densities,
+    cache,
+    ke_buffer,
+    fe_buffer,
+)
+    if cache !== nothing
+        assemble_with_cache!(
+            K,
+            f,
+            dh,
+            material_model,
+            densities,
+            cache,
+            ke_buffer,
+            fe_buffer,
+        )
+    else
+        assemble_variable_material!(
+            K,
+            f,
+            dh,
+            cellvalues,
+            material_model,
+            densities,
+            ke_buffer,
+            fe_buffer,
+        )
+    end
+end
+
+"""
+    assemble_with_cache!(K, f, dh, material_model, densities, cache, ke_buffer, fe_buffer)
+
+Assembly using cached unit matrices with in-place scaling.
+"""
+function assemble_with_cache!(
+    K,
+    f,
+    dh,
+    material_model,
+    densities,
+    cache,
+    ke_buffer,
+    fe_buffer,
+)
+    unit_matrices = cache[:unit_matrices]
+    λ_unit = cache[:λ_unit]
+
+    fill!(fe_buffer, 0.0)
+    assembler = start_assemble(K, f)
+
+    for cell in CellIterator(dh)
+        cell_id = cellid(cell)
+        density = densities[cell_id]
+
+        # Get current material parameters
+        λ_current, _ = material_model(density)
+        scaling_factor = λ_current / λ_unit
+
+        # In-place scaling: ke_buffer = scaling_factor * unit_matrix
+        unit_ke = unit_matrices[cell_id]
+        @inbounds for j = 1:size(ke_buffer, 2)
+            for i = 1:size(ke_buffer, 1)
+                ke_buffer[i, j] = scaling_factor * unit_ke[i, j]
+            end
+        end
+
+        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
+    end
+end
+
+"""
+    assemble_variable_material!(K, f, dh, cellvalues, material_model, densities, ke_buffer, fe_buffer)
+
+Assembly for variable material properties without caching.
+"""
+function assemble_variable_material!(
+    K,
+    f,
+    dh,
+    cellvalues,
+    material_model,
+    densities,
+    ke_buffer,
+    fe_buffer,
+)
+    fill!(fe_buffer, 0.0)
+    assembler = start_assemble(K, f)
+
+    for cell in CellIterator(dh)
+        reinit!(cellvalues, cell)
+
+        cell_id = cellid(cell)
+        density = densities[cell_id]
+        λ, μ = material_model(density)
+
+        # Compute element stiffness into buffer
+        assemble_element_stiffness_matrix!(ke_buffer, cellvalues, λ, μ)
+        assemble!(assembler, celldofs(cell), ke_buffer, fe_buffer)
+    end
+end
+
+# =============================================================================
+# ELEMENT VOLUMES AND VOLUME QUADRATURE
+# =============================================================================
+
+"""
+    calculate_element_volumes(grid, cellvalues)
+
+Calculate volume of each element in the grid.
+"""
+function calculate_element_volumes(grid::Grid, cellvalues)
+    n_cells = getncells(grid)
+    element_volumes = zeros(n_cells)
+
+    for cell_idx = 1:n_cells
+        coords = getcoordinates(grid, cell_idx)
+        reinit!(cellvalues, coords)
+
+        volume = 0.0
+        for q_point = 1:getnquadpoints(cellvalues)
+            dΩ = getdetJdV(cellvalues, q_point)
+            volume += dΩ
+        end
+        element_volumes[cell_idx] = volume
+    end
+
+    return element_volumes
+end
+
+"""
+    create_volume_quadrature(grid)
+
+Create CellValues for volume calculation with 3rd order quadrature.
+"""
+function create_volume_quadrature(grid::Grid{dim}) where {dim}
+    cell = getcells(grid, 1)
+
+    if cell isa Hexahedron
+        ip = Lagrange{RefHexahedron,1}()
+        qr = QuadratureRule{RefHexahedron}(3)
+    elseif cell isa Tetrahedron
+        ip = Lagrange{RefTetrahedron,1}()
+        qr = QuadratureRule{RefTetrahedron}(3)
+    elseif cell isa Quadrilateral && dim == 2
+        ip = Lagrange{RefQuadrilateral,1}()
+        qr = QuadratureRule{RefQuadrilateral}(3)
+    elseif cell isa Triangle && dim == 2
+        ip = Lagrange{RefTriangle,1}()
+        qr = QuadratureRule{RefTriangle}(3)
+    else
+        error("Unsupported cell type: $(typeof(cell))")
+    end
+
+    return CellValues(qr, ip)
 end
 
 end # module
