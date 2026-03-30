@@ -121,7 +121,7 @@ opt_params = OptimizationParameters(
 # 6. Run optimization
 results = simp_optimize(
     grid, dh, cellvalues,
-    [(dh, collect(force_nodes), [0.0, -1.0, 0.0])], # forces: [(dh, nodes, vector)]
+    [PointLoad(dh, collect(force_nodes), [0.0, -1.0, 0.0])], # forces
     [ch_fixed],                                     # boundary conditions
     opt_params
 )
