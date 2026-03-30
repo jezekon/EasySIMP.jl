@@ -146,6 +146,23 @@ println("  ✓ Symmetry plane z=1.0 (U3=0): $(length(symmetry_z_nodes)) nodes")
 # -----------------------------------------------------------------------------
 total_mesh_volume = calculate_volume(grid)
 
+# Pre-assemble once to create ConstraintHandlers (shared across all tolerance runs)
+K_run = allocate_matrix(dh)
+f_run = zeros(ndofs(dh))
+
+assemble_stiffness_matrix_simp!(
+    K_run,
+    f_run,
+    dh,
+    cellvalues,
+    material_model,
+    fill(0.4, getncells(grid)),
+)
+
+ch_support_left = apply_fixed_boundary!(K_run, f_run, dh, support_left)
+ch_support_right = apply_fixed_boundary!(K_run, f_run, dh, support_right)
+ch_symmetry_z = apply_sliding_boundary!(K_run, f_run, dh, symmetry_z_nodes, [3])
+
 for tol in tolerance_values
     tol_str = @sprintf("%02d", round(Int, tol * 100))
     results_dir = "./results/08_3D_2x1x1_Michell-half_$(tol_str)tol_r2.0"
@@ -167,25 +184,6 @@ for tol in tolerance_values
         )
         println("  ✓ Saved: boundary_conditions.vtu")
     end
-
-    # Re-assemble and apply boundary conditions for each run
-    K_run = allocate_matrix(dh)
-    f_run = zeros(ndofs(dh))
-
-    assemble_stiffness_matrix_simp!(
-        K_run,
-        f_run,
-        dh,
-        cellvalues,
-        material_model,
-        fill(0.4, getncells(grid)),
-    )
-
-    ch_support_left = apply_fixed_boundary!(K_run, f_run, dh, support_left)
-    ch_support_right = apply_fixed_boundary!(K_run, f_run, dh, support_right)
-    ch_symmetry_z = apply_sliding_boundary!(K_run, f_run, dh, symmetry_z_nodes, [3])
-
-    apply_force!(f_run, dh, collect(force_nodes), [0.0, -1.0, 0.0])
 
     # Optimization parameters
     opt_params = OptimizationParameters(
