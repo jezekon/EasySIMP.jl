@@ -173,6 +173,21 @@ println("="^80)
 
 total_mesh_volume = calculate_volume(grid)
 
+# Pre-assemble once to create ConstraintHandlers (shared across all tolerance runs)
+K_run = allocate_matrix(dh)
+f_run = zeros(ndofs(dh))
+
+assemble_stiffness_matrix_simp!(
+    K_run,
+    f_run,
+    dh,
+    cellvalues,
+    material_model,
+    fill(0.4, getncells(grid)),
+)
+
+ch_fixed = apply_fixed_boundary!(K_run, f_run, dh, fixed_nodes)
+
 for tol in tolerance_values
     # Format tolerance for folder name (e.g., 0.01 -> "01", 0.08 -> "08", 0.16 -> "16")
     tol_str = @sprintf("%02d", round(Int, tol * 100))
@@ -194,23 +209,6 @@ for tol in tolerance_values
         )
         println("  ✓ Saved: boundary_conditions.vtu")
     end
-
-    # Fresh K and f for each run
-    K_run = allocate_matrix(dh)
-    f_run = zeros(ndofs(dh))
-
-    # Assemble and apply BC
-    assemble_stiffness_matrix_simp!(
-        K_run,
-        f_run,
-        dh,
-        cellvalues,
-        material_model,
-        fill(0.4, getncells(grid)),
-    )
-
-    ch_fixed = apply_fixed_boundary!(K_run, f_run, dh, fixed_nodes)
-    apply_force!(f_run, dh, collect(force_nodes), [0.0, 0.0, -1.0])
 
     # Optimization parameters
     opt_params = OptimizationParameters(

@@ -152,6 +152,23 @@ println("="^80)
 
 total_mesh_volume = calculate_volume(grid)
 
+# Pre-assemble once to create ConstraintHandlers (shared across all tolerance runs)
+K_run = allocate_matrix(dh)
+f_run = zeros(ndofs(dh))
+
+assemble_stiffness_matrix_simp!(
+    K_run,
+    f_run,
+    dh,
+    cellvalues,
+    material_model,
+    fill(0.4, getncells(grid)),
+)
+
+ch_symmetry = apply_sliding_boundary!(K_run, f_run, dh, symmetry_nodes, [1])
+ch_support = apply_sliding_boundary!(K_run, f_run, dh, support_nodes, [2])
+ch_z_fix = apply_sliding_boundary!(K_run, f_run, dh, z_fix_node, [3])
+
 for tol in tolerance_values
     # Format tolerance for folder name
     tol_str = @sprintf("%02d", round(Int, tol * 100))
@@ -173,26 +190,6 @@ for tol in tolerance_values
         )
         println("  ✓ Saved: boundary_conditions.vtu")
     end
-
-    # Fresh K and f for each run
-    K_run = allocate_matrix(dh)
-    f_run = zeros(ndofs(dh))
-
-    # Assemble and apply BC
-    assemble_stiffness_matrix_simp!(
-        K_run,
-        f_run,
-        dh,
-        cellvalues,
-        material_model,
-        fill(0.4, getncells(grid)),
-    )
-
-    ch_symmetry = apply_sliding_boundary!(K_run, f_run, dh, symmetry_nodes, [1])
-    ch_support = apply_sliding_boundary!(K_run, f_run, dh, support_nodes, [2])
-    ch_z_fix = apply_sliding_boundary!(K_run, f_run, dh, z_fix_node, [3])
-
-    apply_force!(f_run, dh, collect(force_nodes), [0.0, -1.0, 0.0])
 
     # Optimization parameters
     opt_params = OptimizationParameters(
