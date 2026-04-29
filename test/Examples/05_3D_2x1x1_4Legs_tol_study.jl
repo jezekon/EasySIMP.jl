@@ -62,7 +62,7 @@ using Dates
 # -----------------------------------------------------------------------------
 # First run triggers JIT compilation and is slower - duplicate 0.16 ensures
 # the second run (and all subsequent) give consistent timing results.
-tolerance_values = [0.16, 0.16, 0.08, 0.04, 0.02, 0.01, 0.005]
+tolerance_values = [0.16, 0.08, 0.04, 0.02, 0.01, 0.005]
 
 # Storage for results
 struct BatchResult

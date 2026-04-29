@@ -7,3 +7,5 @@
 *.txt
 /.claude
 .DS_Store
+/results
+Manifest.toml
