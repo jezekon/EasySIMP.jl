@@ -69,12 +69,10 @@ function calculate_volume(
     # Choose appropriate reference shape based on cell type
     if cell_type <: Ferrite.Hexahedron
         # For 8-node hexahedral elements
-        # println("Calculating volume for hexahedral elements with density")
         ip = Lagrange{RefHexahedron,1}()
         qr = QuadratureRule{RefHexahedron}(2)  # Higher-order quadrature for accuracy
     else
         # Default to tetrahedron
-        # println("Calculating volume for tetrahedral elements with density")
         ip = Lagrange{RefTetrahedron,1}()
         qr = QuadratureRule{RefTetrahedron}(2)
     end

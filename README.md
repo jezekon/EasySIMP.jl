@@ -16,7 +16,7 @@ EasySIMP is a Julia package for topology optimization using the Solid Isotropic 
 
 ## Installation
 
-**Requirements:** Julia LTS (1.10.10)
+**Requirements:** Julia ≥ 1.10
 ```julia
 # From Julia REPL, press ] to enter package mode
 pkg> add https://github.com/jezekon/EasySIMP.jl
@@ -27,6 +27,23 @@ or
 git clone https://github.com/jezekon/EasySIMP.jl
 ```
 
+## API Overview
+
+The package exports the following symbols, grouped by module:
+
+| Group | Exported symbols |
+|-------|------------------|
+| Mesh import | `import_mesh` |
+| FEM setup & material | `setup_problem`, `create_material_model`, `create_simp_material_model`, `assemble_stiffness_matrix_simp!` |
+| Boundary conditions | `apply_fixed_boundary!`, `apply_sliding_boundary!` |
+| Forces | `apply_force!`, `apply_surface_traction!`, `get_boundary_facets` |
+| Node selection | `select_nodes_by_plane`, `select_nodes_by_circle`, `select_nodes_by_cylinder`, `select_nodes_by_arc` |
+| Optimization | `simp_optimize`, `OptimizationParameters` |
+| Load conditions | `AbstractLoadCondition`, `PointLoad`, `SurfaceTractionLoad` |
+| Filter cache (advanced) | `FilterCache`, `create_filter_cache` |
+| Post-processing | `export_results_vtu`, `create_results_data`, `export_boundary_conditions` |
+| Utilities | `calculate_volume`, `print_info`, `print_success`, `print_warning`, `print_error`, `print_data` |
+
 ## Main Function
 
 Run SIMP topology optimization:
@@ -35,7 +52,7 @@ Run SIMP topology optimization:
 simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceleration_data)
 ```
 
-#### Parameters
+### Parameters
 
 - `grid::Grid`: Ferrite Grid object containing the mesh
 - `dh::DofHandler`: Degree of freedom handler from Ferrite
@@ -45,11 +62,11 @@ simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceler
 - `params::OptimizationParameters`: Configuration options
 - `acceleration_data`: Optional tuple `(acceleration_vector, base_density)` for body forces
 
-#### Return Value
+### Return Value
 - `OptimizationResult`: Complete optimization results including densities, displacements, stresses, and convergence history
 - **Output files**: `.vtu` mesh files for visualization in ParaView
 
-### OptimizationParameters
+## OptimizationParameters
 
 Configure the optimization process with the following options:
 
@@ -62,29 +79,33 @@ params = OptimizationParameters(;
     volume_fraction = 0.5,                 # Target volume fraction (0-1)
     max_iterations = 200,                  # Maximum optimization iterations
     tolerance = 0.01,                      # Convergence tolerance
-    filter_radius = 1.5,                   # Sensitivity filter radius (× element size)
+    filter_radius = 1.5,                   # Filter radius (× element size)
+    filter_type = :sensitivity,            # Filter type: :sensitivity or :density
     move_limit = 0.2,                      # Maximum density change per iteration
     damping = 0.5,                         # Optimality criteria damping factor
     use_cache = true,                      # Enable performance caching
     export_interval = 0,                   # Export every N iterations (0 = disabled)
     export_path = "",                      # Path for intermediate results
-    task_name = "SIMP_Optimization"        # Name for logging files
+    task_name = "SIMP_Optimization",       # Name for logging files
+    tolerance_checkpoints = Float64[]      # Extra tolerances to export at (multi-tol study)
 )
 ```
 
-#### Option Details
+### Option Details
 
 - **E0**: Young's modulus of the solid material (typically 1.0 for normalized, or actual values like 200 GPa for steel)
 - **Emin**: Minimum stiffness to avoid singularity (recommended: 1e-6 to 1e-9)
 - **ν**: Poisson's ratio of the material
 - **p**: SIMP penalization parameter (typically 3.0)
 - **volume_fraction**: Target volume constraint as fraction of total volume
-- **filter_radius**: Controls smoothing of sensitivity field (1.5-2.5 × average element size recommended)
+- **filter_radius**: Controls smoothing of the filter field (1.5-2.5 × average element size recommended)
+- **filter_type**: `:sensitivity` (default — filters the sensitivity field) or `:density` (filters the density field)
 - **export_interval**: When > 0, exports intermediate results every N iterations for animation
 - **use_cache**: Enables caching of element stiffness matrices for improved performance
 - **task_name**: Identifier for logging and summary files
+- **tolerance_checkpoints**: Optional list of intermediate tolerance values; when supplied, results are also exported each time convergence drops below one of these values (useful for tolerance sensitivity studies — see `test/Examples/05_3D_2x1x1_4Legs_tol_study.jl`)
 
-### Example Usage
+## Example Usage
 
 ```julia
 using EasySIMP
@@ -131,7 +152,7 @@ results_data = create_results_data(grid, dh, cellvalues, results)
 export_results_vtu(results_data, "cantilever_beam")
 ```
 
-### Advanced Usage Examples
+## Advanced Usage Examples
 
 For complete examples with detailed documentation, see [`test/Examples/`](test/Examples/):
 
@@ -151,7 +172,7 @@ julia --project=. test/Examples/04_gripper_complex.jl
 
 Additional examples (MBB beam, wheel with surface traction, etc.) are available in the `test/Examples/` directory.
 
-### Visualization in ParaView
+## Visualization in ParaView
 
 1. Load the output VTU file in ParaView
 2. Apply **Threshold** filter on `density` field

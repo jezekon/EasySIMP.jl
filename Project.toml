@@ -14,13 +14,19 @@ ReadVTK = "dc215faf-f008-4882-a9f7-a79a826fadc3"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
-Ferrite = "1.1.0"
-FerriteGmsh = "1.2.1"
+Ferrite = "1.1"
+FerriteGmsh = "1.2"
 NearestNeighbors = "0.4"
 ReadVTK = "0.2.4"
-StaticArrays = "1.9.13"
-WriteVTK = "1.21.2"
+StaticArrays = "1"
+WriteVTK = "1.21"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
