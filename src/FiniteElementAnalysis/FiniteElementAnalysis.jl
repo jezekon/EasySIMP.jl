@@ -472,6 +472,30 @@ function get_boundary_facets(grid::Grid, nodes::Set{Int})
 end
 
 """
+    assemble_element_body_force!(fe, cellvalues, body_force_vector, density)
+
+Element body-force vector fe = ∫ Nᵀ (density · b) dΩ, in-place (cellvalues must be
+reinitialized).
+"""
+function assemble_element_body_force!(fe, cellvalues, body_force_vector, density)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    fill!(fe, 0.0)
+
+    for q_point = 1:getnquadpoints(cellvalues)
+        dΩ = getdetJdV(cellvalues, q_point)
+
+        for i = 1:n_basefuncs
+            N_vec = shape_value(cellvalues, q_point, i)
+            dofs_per_node = 3
+            dof_component = mod(i - 1, dofs_per_node) + 1
+            N_scalar = N_vec[dof_component]
+
+            fe[i] += density * body_force_vector[dof_component] * N_scalar * dΩ
+        end
+    end
+end
+
+"""
     apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vector, density_data)
 
 Apply volume forces with variable density distribution (for SIMP).
@@ -479,7 +503,6 @@ Apply volume forces with variable density distribution (for SIMP).
 function apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vector, density_data)
     n_basefuncs = getnbasefunctions(cellvalues)
     fe_body = zeros(n_basefuncs)
-    total_force_applied = zeros(3)
 
     for cell in CellIterator(dh)
         cell_id = cellid(cell)
@@ -492,32 +515,12 @@ function apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vect
         end
 
         reinit!(cellvalues, cell)
-        fill!(fe_body, 0.0)
+        assemble_element_body_force!(fe_body, cellvalues, body_force_vector, density)
 
-        cell_dofs = celldofs(cell)
-
-        for q_point = 1:getnquadpoints(cellvalues)
-            dΩ = getdetJdV(cellvalues, q_point)
-
-            for i = 1:n_basefuncs
-                N_vec = shape_value(cellvalues, q_point, i)
-                dofs_per_node = 3
-                dof_component = mod(i - 1, dofs_per_node) + 1
-                N_scalar = N_vec[dof_component]
-
-                body_force_contribution = density * body_force_vector[dof_component] * N_scalar * dΩ
-                fe_body[i] += body_force_contribution
-                total_force_applied[dof_component] += body_force_contribution
-            end
-        end
-
-        for (local_dof, global_dof) in enumerate(cell_dofs)
+        for (local_dof, global_dof) in enumerate(celldofs(cell))
             f[global_dof] += fe_body[local_dof]
         end
     end
-
-    println("Applied variable density volume force")
-    println("  Total force applied: $total_force_applied N")
 end
 
 """
@@ -533,16 +536,7 @@ function calculate_unit_body_force_vectors(dh, cellvalues, body_force_vector)
 
     for cell in CellIterator(dh)
         reinit!(cellvalues, cell)
-        ge = unit_vectors[cellid(cell)]
-
-        for q_point = 1:getnquadpoints(cellvalues)
-            dΩ = getdetJdV(cellvalues, q_point)
-            for i = 1:n_basefuncs
-                dof_component = mod(i - 1, 3) + 1
-                N_scalar = shape_value(cellvalues, q_point, i)[dof_component]
-                ge[i] += body_force_vector[dof_component] * N_scalar * dΩ
-            end
-        end
+        assemble_element_body_force!(unit_vectors[cellid(cell)], cellvalues, body_force_vector, 1.0)
     end
 
     return unit_vectors
