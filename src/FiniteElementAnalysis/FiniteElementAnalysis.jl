@@ -371,7 +371,7 @@ Apply position-dependent surface traction using Gauss quadrature.
 - `f`: Global force vector (modified in-place)
 - `dh`: DofHandler
 - `grid`: Computational mesh
-- `boundary_facets`: Set of (cell_id, local_face_id) tuples
+- `boundary_facets`: (cell_id, local_face_id) pairs, see `get_boundary_facets`
 - `traction_function`: Function (x, y, z) -> [Tx, Ty, Tz]
 """
 function apply_surface_traction!(
@@ -381,24 +381,10 @@ function apply_surface_traction!(
     boundary_facets,
     traction_function::Function,
 )
-    cell_type = typeof(getcells(grid, 1))
-
-    if cell_type <: Ferrite.Hexahedron
-        ip = Lagrange{RefHexahedron,1}()^3
-        qr_face = FacetQuadratureRule{RefHexahedron}(2)
-    elseif cell_type <: Ferrite.Tetrahedron
-        ip = Lagrange{RefTetrahedron,1}()^3
-        qr_face = FacetQuadratureRule{RefTetrahedron}(2)
-    else
-        error("Unsupported cell type: $cell_type")
-    end
-
-    facevalues = FacetValues(qr_face, ip)
+    facevalues = create_facet_values(grid)
 
     n_basefuncs = getnbasefunctions(facevalues)
     fe = zeros(n_basefuncs)
-
-    total_force = zeros(3)
 
     for (cell_id, local_face_id) in boundary_facets
         coords = getcoordinates(grid, cell_id)
@@ -415,8 +401,6 @@ function apply_surface_traction!(
                 N = shape_value(facevalues, q_point, i)
                 fe[i] += (N ⋅ traction) * dΓ
             end
-
-            total_force .+= traction * dΓ
         end
 
         cell_dofs = celldofs(dh, cell_id)
@@ -427,46 +411,64 @@ function apply_surface_traction!(
 end
 
 """
+    calculate_surface_area(grid, boundary_facets)
+
+Total area of the boundary facets, integrated with the facet quadrature of the traction loads.
+"""
+function calculate_surface_area(grid::Grid, boundary_facets)
+    facevalues = create_facet_values(grid)
+    area = 0.0
+
+    for (cell_id, local_face_id) in boundary_facets
+        reinit!(facevalues, getcoordinates(grid, cell_id), local_face_id)
+        area += sum(getdetJdV(facevalues, q_point) for q_point = 1:getnquadpoints(facevalues))
+    end
+
+    return area
+end
+
+"""
+    create_facet_values(grid)
+
+FacetValues for the integration over facets of linear elements of the grid's cell type.
+"""
+function create_facet_values(grid::Grid)
+    refshape = getrefshape(getcelltype(grid))
+    return FacetValues(FacetQuadratureRule{refshape}(2), Lagrange{refshape,1}()^3)
+end
+
+"""
     get_boundary_facets(grid, nodes)
 
-Identify boundary facets containing all nodes from the given set.
+Identify boundary facets whose nodes all lie in the given set. A facet is on the
+boundary if it belongs to one cell only; the local facet ids follow Ferrite's
+numbering (`Ferrite.facets`), which `reinit!` of FacetValues expects.
 
 # Returns
-- `Set{Tuple{Int,Int}}`: Set of (cell_id, local_face_id) pairs
+- `Vector{Tuple{Int,Int}}`: (cell_id, local_face_id) pairs, in cell order
 """
 function get_boundary_facets(grid::Grid, nodes::Set{Int})
-    boundary_facets = Set{Tuple{Int,Int}}()
+    candidate_facets = Tuple{Int,Int}[]
+    face_cell_count = Dict{Vector{Int},Int}()  # sorted face nodes -> number of cells
 
-    for cell_id = 1:getncells(grid)
-        cell = getcells(grid, cell_id)
-        face_nodes_list = get_face_nodes(cell)
-
-        for (local_face_id, face_nodes) in enumerate(face_nodes_list)
-            global_face_nodes = [cell.nodes[i] for i in face_nodes]
-
-            if all(n -> n in nodes, global_face_nodes)
-                push!(boundary_facets, (cell_id, local_face_id))
+    for (cell_id, cell) in enumerate(getcells(grid))
+        for (local_face_id, face_nodes) in enumerate(Ferrite.facets(cell))
+            if all(n -> n in nodes, face_nodes)
+                key = sort!(collect(face_nodes))
+                face_cell_count[key] = get(face_cell_count, key, 0) + 1
+                push!(candidate_facets, (cell_id, local_face_id))
             end
         end
     end
 
+    # A face shared by two cells lies inside the mesh
+    boundary_facets = filter(candidate_facets) do (cell_id, local_face_id)
+        face_nodes = Ferrite.facets(getcells(grid, cell_id))[local_face_id]
+        return face_cell_count[sort!(collect(face_nodes))] == 1
+    end
+
     println("Found $(length(boundary_facets)) boundary facets")
     return boundary_facets
-end
-
-# Local face ids must follow Ferrite's facet numbering, because the id is passed to
-# reinit!(facevalues, coords, local_face_id) in the traction integration.
-function get_face_nodes(cell::Ferrite.Tetrahedron)
-    # Ferrite: ((1,3,2), (1,2,4), (2,3,4), (1,4,3))
-    return [(1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3)]
-end
-
-function get_face_nodes(cell::Ferrite.Hexahedron)
-    # Ferrite: ((1,4,3,2), (1,2,6,5), (2,3,7,6), (3,4,8,7), (1,5,8,4), (5,6,7,8))
-    return [
-        (1, 4, 3, 2), (1, 2, 6, 5), (2, 3, 7, 6),
-        (3, 4, 8, 7), (1, 5, 8, 4), (5, 6, 7, 8)
-    ]
 end
 
 """

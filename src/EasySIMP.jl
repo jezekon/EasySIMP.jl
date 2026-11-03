@@ -9,7 +9,7 @@ Main features:
 - SIMP material interpolation with OC method
 - KD-tree accelerated filtering with sensitivity and density filter types (O(n log n) instead of O(n²))
 - Memory-optimized assembly with matrix reuse
-- Support for point loads, nodal traction, and surface traction
+- Support for point loads, surface traction and body forces
 - VTU export for ParaView visualization
 """
 module EasySIMP
