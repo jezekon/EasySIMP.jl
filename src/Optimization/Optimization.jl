@@ -179,10 +179,12 @@ Run SIMP topology optimization with memory-optimized implementation.
 - `grid`: Ferrite Grid object
 - `dh`: DofHandler
 - `cellvalues`: CellValues for interpolation
-- `loads`: Vector of load conditions (PointLoad, SurfaceTractionLoad, or legacy tuple)
-- `boundary_conditions`: Vector of ConstraintHandlers
+- `loads`: Vector of load conditions (PointLoad, SurfaceTractionLoad); they do not depend
+  on the design and are assembled once
+- `boundary_conditions`: Vector of ConstraintHandlers (see `create_constraint_handler`)
 - `params`: OptimizationParameters
-- `acceleration_data`: Optional tuple (acceleration_vector, density) for body forces
+- `acceleration_data`: Optional tuple (acceleration_vector, density) for body forces; the
+  body force density · ρ_e · acceleration acts on every cell and changes with the design
 
 # Returns
 - `OptimizationResult` containing final design and history
@@ -224,6 +226,12 @@ function simp_optimize(
     K = allocate_matrix(dh)
     f = zeros(n_dofs)
     u = zeros(n_dofs)
+
+    # Load vector of the design-independent loads, assembled ONCE
+    f_loads = zeros(n_dofs)
+    for load in loads
+        apply_load_condition!(f_loads, load)
+    end
 
     # Sensitivity vectors - allocated ONCE
     sensitivities = zeros(n_cells)
@@ -293,10 +301,6 @@ function simp_optimize(
         iteration = iter
         copyto!(old_densities, densities)
 
-        # Reset matrices (NO reallocation - just zero out values)
-        fill!(K.nzval, 0.0)
-        fill!(f, 0.0)
-
         # Density filter: compute physical densities before assembly
         if use_density_filter
             apply_density_filter_cached!(filtered_densities, filter_cache, densities)
@@ -305,8 +309,9 @@ function simp_optimize(
             physical_densities = densities
         end
 
-        # Assemble system with in-place operations
-        assemble_stiffness_matrix_simp!(
+        # Finite element analysis (K, f and u are reused)
+        energy = solve_equilibrium!(
+            u,
             K,
             f,
             dh,
@@ -316,29 +321,12 @@ function simp_optimize(
             cache,
             ke_buffer,
             fe_buffer,
+            f_loads,
+            boundary_conditions,
+            acceleration_data,
         )
 
-        # Apply acceleration if provided
-        if acceleration_data !== nothing
-            acceleration_vector, base_density = acceleration_data
-            variable_densities = physical_densities .* base_density
-            apply_variable_density_volume_force!(
-                f,
-                dh,
-                cellvalues,
-                acceleration_vector,
-                variable_densities,
-            )
-        end
-
-        # Apply loads and boundary conditions
-        apply_loads_and_bcs!(K, f, loads, boundary_conditions)
-
-        # Solve using Symmetric wrapper for CHOLMOD compatibility
-        u .= cholesky(Symmetric(K, :L)) \ f
-
-        # Calculate energy and volume
-        energy = 0.5 * dot(u, K * u)
+        # Calculate volume
         current_volume = dot(physical_densities, element_volumes)
         current_volume_fraction = current_volume / total_volume
 
@@ -452,31 +440,20 @@ function simp_optimize(
                         "Tolerance checkpoint $(cp) reached at iteration $(iteration)",
                     )
 
-                    # Calculate stresses for checkpoint export
-                    stress_cp, _, _ = calculate_stresses_simp(
-                        u,
+                    export_intermediate_result(
+                        joinpath(params.export_path, "final_results_$(tol_str)tol"),
+                        grid,
                         dh,
                         cellvalues,
                         material_model,
                         physical_densities,
-                    )
-                    cp_result = OptimizationResult(
-                        copy(physical_densities),
-                        copy(u),
-                        stress_cp,
+                        u,
                         energy,
                         current_volume,
                         iteration,
-                        false,
-                        copy(energy_history),
-                        copy(volume_history),
+                        energy_history,
+                        volume_history,
                     )
-                    cp_results_data = create_results_data(grid, dh, cellvalues, cp_result)
-                    PostProcessing.export_main_results(
-                        cp_results_data,
-                        joinpath(params.export_path, "final_results_$(tol_str)tol"),
-                    )
-                    print_success("Checkpoint exported: final_results_$(tol_str)tol.vtu")
                 end
             end
         end
@@ -484,31 +461,19 @@ function simp_optimize(
         # Export intermediate results (periodic interval export)
         if params.export_interval > 0 && iteration % params.export_interval == 0
             if !isempty(params.export_path)
-                # Reuse existing K, f, u - no extra allocation
-                stress_field_temp, _, _ = calculate_stresses_simp(
-                    u,
+                export_intermediate_result(
+                    joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
+                    grid,
                     dh,
                     cellvalues,
                     material_model,
                     physical_densities,
-                )
-                intermediate_result = OptimizationResult(
-                    copy(physical_densities),
-                    copy(u),
-                    stress_field_temp,
+                    u,
                     energy,
                     current_volume,
                     iteration,
-                    false,
-                    copy(energy_history),
-                    copy(volume_history),
-                )
-                results_data =
-                    create_results_data(grid, dh, cellvalues, intermediate_result)
-                export_results_vtu(
-                    results_data,
-                    joinpath(params.export_path, "iter_$(lpad(iteration, 4, '0'))"),
-                    include_history = false,
+                    energy_history,
+                    volume_history,
                 )
             end
         end
@@ -528,8 +493,6 @@ function simp_optimize(
     # =========================================================================
     # FINAL ANALYSIS
     # =========================================================================
-    fill!(K.nzval, 0.0)
-    fill!(f, 0.0)
 
     # Compute final physical densities
     if use_density_filter
@@ -539,7 +502,8 @@ function simp_optimize(
         final_physical_densities = densities
     end
 
-    assemble_stiffness_matrix_simp!(
+    final_energy = solve_equilibrium!(
+        u,
         K,
         f,
         dh,
@@ -549,26 +513,10 @@ function simp_optimize(
         cache,
         ke_buffer,
         fe_buffer,
+        f_loads,
+        boundary_conditions,
+        acceleration_data,
     )
-
-    if acceleration_data !== nothing
-        acceleration_vector, base_density = acceleration_data
-        variable_densities = final_physical_densities .* base_density
-        apply_variable_density_volume_force!(
-            f,
-            dh,
-            cellvalues,
-            acceleration_vector,
-            variable_densities,
-        )
-    end
-
-    apply_loads_and_bcs!(K, f, loads, boundary_conditions)
-
-    # Solve using Symmetric wrapper for CHOLMOD compatibility
-    u .= cholesky(Symmetric(K, :L)) \ f
-
-    final_energy = 0.5 * dot(u, K * u)
     final_volume = dot(final_physical_densities, element_volumes)
 
     # Calculate stresses
@@ -606,18 +554,110 @@ end
 # =============================================================================
 
 """
-    apply_loads_and_bcs!(K, f, loads, boundary_conditions)
+    solve_equilibrium!(u, K, f, dh, cellvalues, material_model, physical_densities, cache,
+                       ke_buffer, fe_buffer, f_loads, boundary_conditions, acceleration_data)
 
-Apply all load conditions and boundary conditions to the system.
+Finite element analysis of one design: assemble K for the physical densities, set f to
+the body force (if `acceleration_data` is given) plus the load vector `f_loads`, apply
+the boundary conditions and solve K u = f. `u`, `K` and `f` are overwritten.
+
+# Returns
+- Energy 0.5 * uᵀ K u
 """
-function apply_loads_and_bcs!(K, f, loads, boundary_conditions)
-    for load in loads
-        apply_load_condition!(f, load)
+function solve_equilibrium!(
+    u,
+    K,
+    f,
+    dh,
+    cellvalues,
+    material_model,
+    physical_densities,
+    cache,
+    ke_buffer,
+    fe_buffer,
+    f_loads,
+    boundary_conditions,
+    acceleration_data,
+)
+    # Reset matrices (NO reallocation - just zero out values)
+    fill!(K.nzval, 0.0)
+    fill!(f, 0.0)
+
+    # Assemble system with in-place operations
+    assemble_stiffness_matrix_simp!(
+        K,
+        f,
+        dh,
+        cellvalues,
+        material_model,
+        physical_densities,
+        cache,
+        ke_buffer,
+        fe_buffer,
+    )
+
+    # Apply acceleration if provided
+    if acceleration_data !== nothing
+        acceleration_vector, base_density = acceleration_data
+        variable_densities = physical_densities .* base_density
+        apply_variable_density_volume_force!(
+            f,
+            dh,
+            cellvalues,
+            acceleration_vector,
+            variable_densities,
+        )
     end
 
+    # Apply loads and boundary conditions
+    f .+= f_loads
     for bc in boundary_conditions
         apply!(K, f, bc)
     end
+
+    # Solve using Symmetric wrapper for CHOLMOD compatibility
+    u .= cholesky(Symmetric(K, :L)) \ f
+
+    return 0.5 * dot(u, K * u)
+end
+
+"""
+    export_intermediate_result(filename, grid, dh, cellvalues, material_model,
+                               physical_densities, u, energy, volume, iteration,
+                               energy_history, volume_history)
+
+Export the current state of the optimization (tolerance checkpoint or periodic export)
+to a VTU file.
+"""
+function export_intermediate_result(
+    filename,
+    grid,
+    dh,
+    cellvalues,
+    material_model,
+    physical_densities,
+    u,
+    energy,
+    volume,
+    iteration,
+    energy_history,
+    volume_history,
+)
+    stress_field, _, _ =
+        calculate_stresses_simp(u, dh, cellvalues, material_model, physical_densities)
+    intermediate_result = OptimizationResult(
+        copy(physical_densities),
+        copy(u),
+        stress_field,
+        energy,
+        volume,
+        iteration,
+        false,
+        copy(energy_history),
+        copy(volume_history),
+    )
+    results_data = create_results_data(grid, dh, cellvalues, intermediate_result)
+    export_results_vtu(results_data, filename)
 end
 
 end # module

@@ -57,16 +57,11 @@ function create_results_data(grid::Grid, dh::DofHandler, cellvalues, opt_result)
 end
 
 """
-    export_results_vtu(results_data, filename_base; include_history=false)
+    export_results_vtu(results_data, filename_base)
 
 Export optimization results to VTU file for ParaView visualization.
-History export is disabled by default.
 """
-function export_results_vtu(
-    results_data::ResultsData,
-    filename_base::String;
-    include_history::Bool = false,
-)
+function export_results_vtu(results_data::ResultsData, filename_base::String)
     print_info("Exporting results to VTU format...")
     export_main_results(results_data, filename_base)
     print_success("VTU export completed: $(filename_base).vtu")
