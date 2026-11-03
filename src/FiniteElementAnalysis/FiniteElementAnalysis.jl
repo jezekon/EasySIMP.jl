@@ -139,29 +139,21 @@ end
 """
     setup_problem(grid::Grid, interpolation_order::Int=1)
 
-Set up the finite element problem for the given grid.
-Automatically detects cell type (tetrahedron or hexahedron).
+Set up the finite element problem for the given grid: a vector displacement field
+of Lagrange elements on the cell type of the grid (tetrahedra or hexahedra).
+`simp_optimize` allocates its own stiffness matrix and force vector.
 
 # Returns
 - `dh`: DofHandler
 - `cellvalues`: CellValues for interpolation and integration
-- `K`: Allocated sparse stiffness matrix
-- `f`: Allocated force vector
 """
 function setup_problem(grid::Grid, interpolation_order::Int = 1)
     dim = 3
 
-    cell_type = typeof(getcells(grid, 1))
-
-    if cell_type <: Ferrite.Hexahedron
-        println("Setting up problem with hexahedral elements")
-        ip = Lagrange{RefHexahedron,interpolation_order}()^dim
-        qr = QuadratureRule{RefHexahedron}(2)
-    else
-        println("Setting up problem with tetrahedral elements")
-        ip = Lagrange{RefTetrahedron,interpolation_order}()^dim
-        qr = QuadratureRule{RefTetrahedron}(2)
-    end
+    refshape = getrefshape(getcelltype(grid))
+    println("Setting up problem with $(nameof(getcelltype(grid))) elements")
+    ip = Lagrange{refshape,interpolation_order}()^dim
+    qr = QuadratureRule{refshape}(2)
 
     cellvalues = CellValues(qr, ip)
 
@@ -169,12 +161,9 @@ function setup_problem(grid::Grid, interpolation_order::Int = 1)
     add!(dh, :u, ip)
     close!(dh)
 
-    n_dofs = ndofs(dh)
-    print_success("FEM setup complete: $n_dofs DOFs")
-    K = allocate_matrix(dh)
-    f = zeros(n_dofs)
+    print_success("FEM setup complete: $(ndofs(dh)) DOFs")
 
-    return dh, cellvalues, K, f
+    return dh, cellvalues
 end
 
 # =============================================================================
