@@ -26,6 +26,7 @@ export setup_problem,
     SurfaceTractionLoad,
     apply_load_condition!,
     calculate_element_volumes,
+    calculate_volume,
     create_volume_quadrature,
     initialize_element_cache
 
@@ -788,30 +789,35 @@ function calculate_element_volumes(grid::Grid, cellvalues)
 end
 
 """
+    calculate_volume(grid, density_data=nothing)
+
+Calculate the volume of the mesh, weighted by the density of each cell if
+`density_data` is given (∑ element_volume * density).
+"""
+function calculate_volume(grid::Grid, density_data::Union{Vector{Float64},Nothing} = nothing)
+    element_volumes = calculate_element_volumes(grid, create_volume_quadrature(grid))
+
+    if density_data === nothing
+        return sum(element_volumes)
+    end
+
+    if length(density_data) != getncells(grid)
+        error(
+            "Density data length ($(length(density_data))) does not match number of cells ($(getncells(grid)))",
+        )
+    end
+
+    return dot(element_volumes, density_data)
+end
+
+"""
     create_volume_quadrature(grid)
 
 Create CellValues for volume calculation with 3rd order quadrature.
 """
-function create_volume_quadrature(grid::Grid{dim}) where {dim}
-    cell = getcells(grid, 1)
-
-    if cell isa Hexahedron
-        ip = Lagrange{RefHexahedron,1}()
-        qr = QuadratureRule{RefHexahedron}(3)
-    elseif cell isa Tetrahedron
-        ip = Lagrange{RefTetrahedron,1}()
-        qr = QuadratureRule{RefTetrahedron}(3)
-    elseif cell isa Quadrilateral && dim == 2
-        ip = Lagrange{RefQuadrilateral,1}()
-        qr = QuadratureRule{RefQuadrilateral}(3)
-    elseif cell isa Triangle && dim == 2
-        ip = Lagrange{RefTriangle,1}()
-        qr = QuadratureRule{RefTriangle}(3)
-    else
-        error("Unsupported cell type: $(typeof(cell))")
-    end
-
-    return CellValues(qr, ip)
+function create_volume_quadrature(grid::Grid)
+    refshape = getrefshape(getcelltype(grid))
+    return CellValues(QuadratureRule{refshape}(3), Lagrange{refshape,1}())
 end
 
 end # module
