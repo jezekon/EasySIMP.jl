@@ -468,14 +468,18 @@ function get_boundary_facets(grid::Grid, nodes::Set{Int})
     return boundary_facets
 end
 
+# Local face ids must follow Ferrite's facet numbering, because the id is passed to
+# reinit!(facevalues, coords, local_face_id) in the traction integration.
 function get_face_nodes(cell::Ferrite.Tetrahedron)
-    return [(1, 2, 3), (1, 2, 4), (2, 3, 4), (1, 3, 4)]
+    # Ferrite: ((1,3,2), (1,2,4), (2,3,4), (1,4,3))
+    return [(1, 3, 2), (1, 2, 4), (2, 3, 4), (1, 4, 3)]
 end
 
 function get_face_nodes(cell::Ferrite.Hexahedron)
+    # Ferrite: ((1,4,3,2), (1,2,6,5), (2,3,7,6), (3,4,8,7), (1,5,8,4), (5,6,7,8))
     return [
-        (1, 2, 3, 4), (5, 6, 7, 8), (1, 2, 6, 5),
-        (2, 3, 7, 6), (3, 4, 8, 7), (4, 1, 5, 8)
+        (1, 4, 3, 2), (1, 2, 6, 5), (2, 3, 7, 6),
+        (3, 4, 8, 7), (1, 5, 8, 4), (5, 6, 7, 8)
     ]
 end
 
