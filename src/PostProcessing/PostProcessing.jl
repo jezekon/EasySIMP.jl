@@ -145,19 +145,14 @@ end
 Extract nodal displacements for VTU export.
 """
 function extract_nodal_displacements(results_data::ResultsData)
-    dh = results_data.dh
     u = results_data.displacements
     n_nodes = getnnodes(results_data.grid)
-
-    dofs_per_node = 3
     nodal_displacements = zeros(3, n_nodes)
 
-    for node = 1:n_nodes
-        for dim = 1:dofs_per_node
-            dof = (node - 1) * dofs_per_node + dim
-            if dof <= length(u)
-                nodal_displacements[dim, node] = u[dof]
-            end
+    # Ferrite numbers dofs cell by cell, not by node id, so map through the dof handler
+    for (node, dofs) in get_node_dofs(results_data.dh)
+        for dim = 1:3
+            nodal_displacements[dim, node] = u[dofs[dim]]
         end
     end
 
