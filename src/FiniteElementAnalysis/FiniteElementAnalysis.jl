@@ -15,6 +15,7 @@ export create_material_model,
     apply_sliding_boundary!,
     apply_force!,
     create_simp_material_model,
+    simp_interpolation,
     assemble_stiffness_matrix_simp!,
     assemble_element_stiffness_matrix,
     assemble_element_stiffness_matrix!,
@@ -82,7 +83,24 @@ function create_material_model(youngs_modulus::Float64, poissons_ratio::Float64)
 end
 
 """
-    create_simp_material_model(E0, nu, Emin=1e-6, p=3.0)
+    simp_interpolation(ρ, p, rho_lin) -> (g, dg/dρ)
+
+Stiffness interpolation g(ρ) in E(ρ) = Emin + (E0 - Emin) g(ρ), and its derivative.
+`rho_lin = 0` gives plain SIMP, g = ρ^p. With `rho_lin > 0` the curve is linear below
+rho_lin, g = rho_lin^(p-1) ρ, continuous at rho_lin (Bruyneel & Duysinx 2005). A body force
+∝ ρ then never meets a stiffness ∝ ρ^p → 0, which otherwise lets low-density regions sag
+under their own weight and drives the OC update into oscillation.
+"""
+@inline function simp_interpolation(density::Float64, p::Float64, rho_lin::Float64)
+    if density < rho_lin
+        slope = rho_lin^(p - 1)
+        return slope * density, slope
+    end
+    return density^p, p * density^(p - 1)
+end
+
+"""
+    create_simp_material_model(E0, nu, Emin=1e-6, p=3.0; rho_lin=0.0)
 
 Create a SIMP (Solid Isotropic Material with Penalization) material model.
 
@@ -91,21 +109,24 @@ Create a SIMP (Solid Isotropic Material with Penalization) material model.
 - `nu`: Poisson's ratio
 - `Emin`: Minimum Young's modulus (default: 1e-6)
 - `p`: Penalization power (default: 3.0)
+- `rho_lin`: Below this density the interpolation is linear (default 0: plain SIMP),
+  see `simp_interpolation`
 
 # Returns
 - Function mapping density ρ to Lamé parameters (λ, μ)
 
 # SIMP Model
-E(ρ) = Emin + (E0 - Emin) * ρ^p
+E(ρ) = Emin + (E0 - Emin) * ρ^p   (ρ ≥ rho_lin)
 """
 function create_simp_material_model(
     E0::Float64,
     nu::Float64,
     Emin::Float64 = 1e-6,
-    p::Float64 = 3.0,
+    p::Float64 = 3.0;
+    rho_lin::Float64 = 0.0,
 )
     function material_for_density(density::Float64)
-        E = Emin + (E0 - Emin) * density^p
+        E = Emin + (E0 - Emin) * simp_interpolation(density, p, rho_lin)[1]
         return compute_lame_parameters(E, nu)
     end
 

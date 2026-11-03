@@ -7,7 +7,7 @@ Calculates derivatives of objective function with respect to design variables.
 
 using Ferrite
 using LinearAlgebra
-using ..FiniteElementAnalysis: compute_lame_parameters
+using ..FiniteElementAnalysis: compute_lame_parameters, simp_interpolation
 
 export calculate_sensitivities, calculate_sensitivities!
 
@@ -29,6 +29,7 @@ Calculate sensitivities in-place without allocations (use in optimization loop).
 - `p`: Penalization power
 - `unit_body_forces`: Optional element body-force vectors g_e for unit density (design-
   dependent load f_e = ρ_e g_e). Adds the load term 2 u_eᵀ g_e of dc/dρ_e.
+- `rho_lin`: Linear interpolation below this density (see `simp_interpolation`; 0 = SIMP)
 """
 function calculate_sensitivities!(
     sensitivities::Vector{Float64},
@@ -42,6 +43,7 @@ function calculate_sensitivities!(
     ν::Float64,
     p::Float64;
     unit_body_forces = nothing,
+    rho_lin::Float64 = 0.0,
 )
     # Lamé parameters for unit Young's modulus
     λ0 = ν / ((1 + ν) * (1 - 2ν))
@@ -74,7 +76,7 @@ function calculate_sensitivities!(
         end
 
         # Derivative of Young's modulus w.r.t. density
-        dE_drho = p * density^(p-1) * (E0 - Emin)
+        dE_drho = simp_interpolation(density, p, rho_lin)[2] * (E0 - Emin)
 
         # Energy sensitivity: ∂c/∂ρ = -∂E/∂ρ * u^T * k_unit * u
         u_elem = @view u[cell_dofs]
@@ -127,6 +129,7 @@ function calculate_sensitivities(
     ν::Float64,
     p::Float64;
     unit_body_forces = nothing,
+    rho_lin::Float64 = 0.0,
 )
     n_cells = getncells(grid)
     sensitivities = zeros(n_cells)
@@ -142,6 +145,7 @@ function calculate_sensitivities(
         ν,
         p;
         unit_body_forces = unit_body_forces,
+        rho_lin = rho_lin,
     )
     return sensitivities
 end

@@ -49,6 +49,8 @@ Parameters for SIMP topology optimization.
 - `export_path`: Directory for intermediate results
 - `task_name`: Name for logging
 - `tolerance_checkpoints`: List of tolerance values for intermediate export
+- `rho_lin`: Stiffness interpolation is linear below this density (default 0: plain SIMP);
+  use about 0.1 with body forces (Bruyneel & Duysinx 2005), see `simp_interpolation`
 """
 mutable struct OptimizationParameters
     # Material properties
@@ -56,6 +58,7 @@ mutable struct OptimizationParameters
     Emin::Float64
     ν::Float64
     p::Float64
+    rho_lin::Float64
 
     # Optimization settings
     volume_fraction::Float64
@@ -100,12 +103,14 @@ mutable struct OptimizationParameters
         export_path = "",
         task_name = "SIMP_Optimization",
         tolerance_checkpoints = Float64[],
+        rho_lin = 0.0,
     )
         new(
             E0,
             Emin,
             ν,
             p,
+            rho_lin,
             volume_fraction,
             max_iterations,
             tolerance,
@@ -229,7 +234,8 @@ function simp_optimize(
     use_density_filter = params.filter_type == :density
 
     # Create material model
-    material_model = create_simp_material_model(params.E0, params.ν, params.Emin, params.p)
+    material_model =
+        create_simp_material_model(params.E0, params.ν, params.Emin, params.p; rho_lin = params.rho_lin)
 
     # Create volume quadrature and calculate element volumes
     volume_cellvalues = create_volume_quadrature(grid)
@@ -341,6 +347,7 @@ function simp_optimize(
             params.ν,
             params.p;
             unit_body_forces = unit_body_forces,
+            rho_lin = params.rho_lin,
         )
 
         # Filter sensitivities
