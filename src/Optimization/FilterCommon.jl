@@ -104,18 +104,18 @@ end
 """
     estimate_element_size(grid)
 
-Estimate characteristic element size (average edge length).
+Characteristic element size: mean of the element sizes of all cells. (A sample of the
+first cells would make the filter radius depend on the cell order of unstructured meshes.)
 """
 function estimate_element_size(grid::Grid)
-    n_sample = min(10, getncells(grid))
     total_size = 0.0
 
-    for cell_idx = 1:n_sample
+    for cell_idx = 1:getncells(grid)
         coords = getcoordinates(grid, cell_idx)
         total_size += calculate_single_element_size(coords)
     end
 
-    return total_size / n_sample
+    return total_size / getncells(grid)
 end
 
 """
