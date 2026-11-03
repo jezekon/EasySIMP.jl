@@ -6,8 +6,7 @@ using SparseArrays
 using StaticArrays
 using ..Utils
 
-export create_material_model,
-    setup_problem,
+export setup_problem,
     get_node_dofs,
     apply_variable_density_volume_force!,
     calculate_unit_body_force_vectors,
@@ -19,6 +18,7 @@ export create_material_model,
     assemble_element_stiffness_matrix,
     assemble_element_stiffness_matrix!,
     calculate_stresses_simp,
+    calculate_von_mises_stress,
     get_boundary_facets,
     apply_surface_traction!,
     AbstractLoadCondition,
@@ -68,18 +68,6 @@ end
 # =============================================================================
 # MATERIAL MODEL CREATION
 # =============================================================================
-
-"""
-    create_material_model(youngs_modulus::Float64, poissons_ratio::Float64)
-
-Create material constants for a linearly elastic material.
-
-# Returns
-- `Tuple{Float64, Float64}`: (λ, μ) - Lamé parameters
-"""
-function create_material_model(youngs_modulus::Float64, poissons_ratio::Float64)
-    return compute_lame_parameters(youngs_modulus, poissons_ratio)
-end
 
 """
     simp_interpolation(ρ, p, rho_lin) -> (g, dg/dρ)
@@ -230,7 +218,7 @@ Simple allocating version for one-off assembly (tests, initial setup).
 
 # Arguments
 - `K`: Global stiffness matrix (modified in-place)
-- `f`: Global force vector (modified in-place)
+- `f`: Global force vector (modified in-place, set to zero)
 - `dh`: DofHandler
 - `cellvalues`: CellValues for interpolation and integration
 - `material_model`: Function mapping density to (λ, μ)
@@ -238,18 +226,19 @@ Simple allocating version for one-off assembly (tests, initial setup).
 """
 function assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, density_data)
     n_basefuncs = getnbasefunctions(cellvalues)
-    ke = zeros(n_basefuncs, n_basefuncs)
-    fe = zeros(n_basefuncs)
+    ke_buffer = zeros(n_basefuncs, n_basefuncs)
+    fe_buffer = zeros(n_basefuncs)
 
-    assembler = start_assemble(K, f)
-
-    for cell in CellIterator(dh)
-        reinit!(cellvalues, cell)
-        density = density_data[cellid(cell)]
-        λ, μ = material_model(density)
-        assemble_element_stiffness_matrix!(ke, cellvalues, λ, μ)
-        assemble!(assembler, celldofs(cell), ke, fe)
-    end
+    assemble_variable_material!(
+        K,
+        f,
+        dh,
+        cellvalues,
+        material_model,
+        density_data,
+        ke_buffer,
+        fe_buffer,
+    )
 end
 
 # =============================================================================
@@ -572,6 +561,16 @@ function calculate_stress_at_quadrature_points(u_cell, cellvalues, λ, μ)
 end
 
 """
+    calculate_von_mises_stress(σ)
+
+Von Mises equivalent stress σ_vM = √(3/2 s ⊡ s) of the stress tensor, s = dev(σ).
+"""
+function calculate_von_mises_stress(σ)
+    dev_stress = dev(σ)
+    return sqrt(3/2 * (dev_stress ⊡ dev_stress))
+end
+
+"""
     calculate_stresses_simp(u, dh, cellvalues, material_model, density_data)
 
 Calculate stress field using SIMP material model.
@@ -598,7 +597,7 @@ function calculate_stresses_simp(u, dh, cellvalues, material_model, density_data
 
         cell_stresses, avg_stress = calculate_stress_at_quadrature_points(u_cell, cellvalues, λ, μ)
 
-        cell_von_mises = sqrt(3/2 * (dev(avg_stress) ⊡ dev(avg_stress)))
+        cell_von_mises = calculate_von_mises_stress(avg_stress)
 
         if cell_von_mises > max_von_mises
             max_von_mises = cell_von_mises

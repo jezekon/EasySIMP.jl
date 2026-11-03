@@ -46,8 +46,7 @@ using .Optimization
 export import_mesh
 
 # FEM setup and material
-export setup_problem,
-    create_material_model, create_simp_material_model, assemble_stiffness_matrix_simp!
+export setup_problem, create_simp_material_model, assemble_stiffness_matrix_simp!
 
 # Boundary conditions
 export create_constraint_handler

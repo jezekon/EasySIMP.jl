@@ -46,8 +46,7 @@ function calculate_sensitivities!(
     rho_lin::Float64 = 0.0,
 )
     # Lamé parameters for unit Young's modulus
-    λ0 = ν / ((1 + ν) * (1 - 2ν))
-    μ0 = 1.0 / (2 * (1 + ν))
+    λ0, μ0 = compute_lame_parameters(1.0, ν)
 
     n_basefuncs = getnbasefunctions(cellvalues)
     ke_unit = zeros(n_basefuncs, n_basefuncs)
@@ -58,22 +57,9 @@ function calculate_sensitivities!(
         cell_dofs = celldofs(cell)
 
         reinit!(cellvalues, cell)
-        fill!(ke_unit, 0.0)
 
         # Compute unit stiffness matrix
-        for q_point = 1:getnquadpoints(cellvalues)
-            dΩ = getdetJdV(cellvalues, q_point)
-            for i = 1:n_basefuncs
-                ∇Ni = shape_gradient(cellvalues, q_point, i)
-                εi = symmetric(∇Ni)
-                for j = 1:n_basefuncs
-                    ∇Nj = shape_gradient(cellvalues, q_point, j)
-                    εj = symmetric(∇Nj)
-                    σ = λ0 * tr(εj) * one(εj) + 2μ0 * εj
-                    ke_unit[i, j] += (εi ⊡ σ) * dΩ
-                end
-            end
-        end
+        assemble_element_stiffness_matrix!(ke_unit, cellvalues, λ0, μ0)
 
         # Derivative of Young's modulus w.r.t. density
         dE_drho = simp_interpolation(density, p, rho_lin)[2] * (E0 - Emin)
@@ -110,13 +96,16 @@ Calculate sensitivities (allocating version for backward compatibility).
 
 # Theory
 For energy minimization:
-∂c/∂ρe = -p * ρe^(p-1) * (E0 - Emin) * ue^T * k0 * ue
+∂c/∂ρe = -p * ρe^(p-1) * (E0 - Emin) * ue^T * k0 * ue + 2 * ue^T * ge
 
 where:
-- p is the penalization power
+- p is the penalization power (the factor p * ρe^(p-1) is the derivative of
+  `simp_interpolation`, constant below `rho_lin`)
 - ρe is the element density  
 - ue is the element displacement vector
 - k0 is the element stiffness matrix for unit Young's modulus
+- ge is the element body-force vector for unit density (`unit_body_forces`; the term
+  is missing without a body force)
 """
 function calculate_sensitivities(
     grid::Grid,
