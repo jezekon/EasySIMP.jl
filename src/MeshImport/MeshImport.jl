@@ -120,36 +120,39 @@ function import_mesh(mesh_file::String)
             error("No cells found in the mesh")
         end
 
-        # Try to import cell data if present
-        try
-            cell_data = ReadVTK.get_cell_data(vtk_file)
+        # Try to import cell data if present. Files without a CellData section
+        # (e.g. stul14.vtu) have no cell sets; reading the section would fail.
+        if !isempty(ReadVTK.piece(vtk_file)["CellData"])
+            try
+                cell_data = ReadVTK.get_cell_data(vtk_file)
 
-            # Look for potential cell sets in cell data
-            # Common names for cell entity IDs in different formats
-            potential_cellset_names =
-                ["CellEntityIds", "element_ids", "gmsh:physical", "ElementId"]
+                # Look for potential cell sets in cell data
+                # Common names for cell entity IDs in different formats
+                potential_cellset_names =
+                    ["CellEntityIds", "element_ids", "gmsh:physical", "ElementId"]
 
-            for name in potential_cellset_names
-                if name in ReadVTK.keys(cell_data)
-                    entity_ids_array = ReadVTK.get_data(cell_data[name])
-                    unique_ids = unique(entity_ids_array)
+                for name in potential_cellset_names
+                    if name in ReadVTK.keys(cell_data)
+                        entity_ids_array = ReadVTK.get_data(cell_data[name])
+                        unique_ids = unique(entity_ids_array)
 
-                    for id in unique_ids
-                        cells_in_set = findall(entity_ids_array .== id)
-                        if !isempty(cells_in_set)
-                            Ferrite.addcellset!(grid, "cellset_$id", Set(cells_in_set))
-                            println(
-                                "  Added cellset_$id with $(length(cells_in_set)) cells",
-                            )
+                        for id in unique_ids
+                            cells_in_set = findall(entity_ids_array .== id)
+                            if !isempty(cells_in_set)
+                                Ferrite.addcellset!(grid, "cellset_$id", Set(cells_in_set))
+                                println(
+                                    "  Added cellset_$id with $(length(cells_in_set)) cells",
+                                )
+                            end
                         end
-                    end
 
-                    # Break after finding and processing the first valid cell set data
-                    break
+                        # Break after finding and processing the first valid cell set data
+                        break
+                    end
                 end
+            catch e
+                @warn "Could not import cell data: $e"
             end
-        catch e
-            @warn "Could not import cell data: $e"
         end
 
     else
