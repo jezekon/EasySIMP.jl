@@ -73,7 +73,6 @@ xmax, ymax, zmax = 2.0, 1.0, 1.0
 # -----------------------------------------------------------------------------
 E0 = 1.0
 ν = 0.3
-material_model = create_simp_material_model(E0, ν, 1e-9, 3.0)
 
 println("\nMaterial properties:")
 println("  E₀ = $E0")
@@ -83,7 +82,7 @@ println("  ν = $ν")
 # 3. FEM SETUP
 # -----------------------------------------------------------------------------
 println("\nSetting up FEM problem...")
-dh, cellvalues, K, f = setup_problem(grid)
+dh, cellvalues = setup_problem(grid)
 println("  ✓ DOFs: $(ndofs(dh))")
 
 # -----------------------------------------------------------------------------
@@ -150,21 +149,9 @@ println("  ✓ Force nodes (circle r=$(force_radius)): $(length(force_nodes))")
 # -----------------------------------------------------------------------------
 total_mesh_volume = calculate_volume(grid)
 
-# Pre-assemble once to create ConstraintHandlers (shared across all tolerance runs)
-K_run = allocate_matrix(dh)
-f_run = zeros(ndofs(dh))
-
-assemble_stiffness_matrix_simp!(
-    K_run,
-    f_run,
-    dh,
-    cellvalues,
-    material_model,
-    fill(0.4, getncells(grid)),
-)
-
-ch_support_left = apply_fixed_boundary!(K_run, f_run, dh, support_left)
-ch_support_right = apply_fixed_boundary!(K_run, f_run, dh, support_right)
+# ConstraintHandlers (shared across all tolerance runs)
+ch_support_left = create_constraint_handler(dh, support_left)
+ch_support_right = create_constraint_handler(dh, support_right)
 
 for tol in tolerance_values
     tol_str = @sprintf("%02d", round(Int, tol * 100))
@@ -180,7 +167,6 @@ for tol in tolerance_values
         all_support_nodes = union(support_left, support_right)
         export_boundary_conditions(
             grid,
-            dh,
             all_support_nodes,
             force_nodes,
             joinpath(results_dir, "boundary_conditions"),

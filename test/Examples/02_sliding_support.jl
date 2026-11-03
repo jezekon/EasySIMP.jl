@@ -51,13 +51,12 @@ println("  ✓ Generated: $(getncells(grid)) elements, $(getnnodes(grid)) nodes"
 # -----------------------------------------------------------------------------
 E0 = 200.0
 ν = 0.3
-material_model = create_simp_material_model(E0, ν, 1e-6, 3.0)
 
 # -----------------------------------------------------------------------------
 # 3. FEM SETUP
 # -----------------------------------------------------------------------------
 println("Setting up FEM problem...")
-dh, cellvalues, K, f = setup_problem(grid)
+dh, cellvalues = setup_problem(grid)
 println("  ✓ DOFs: $(ndofs(dh))")
 
 # -----------------------------------------------------------------------------
@@ -103,20 +102,9 @@ if isempty(force_nodes)
 end
 println("  ✓ Force nodes: $(length(force_nodes))")
 
-# Assemble and apply boundary conditions
-assemble_stiffness_matrix_simp!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    fill(0.4, getncells(grid)),
-)
-
-ch_sliding = apply_sliding_boundary!(K, f, dh, sliding_nodes, [1])  # Fix X only
-ch_support = apply_sliding_boundary!(K, f, dh, support_nodes, [2])  # Fix Y only
-
-apply_force!(f, dh, collect(force_nodes), [0.0, -1.0, 0.0])
+# Apply boundary conditions
+ch_sliding = create_constraint_handler(dh, sliding_nodes, [1])  # Fix X only
+ch_support = create_constraint_handler(dh, support_nodes, [2])  # Fix Y only
 
 # -----------------------------------------------------------------------------
 # 5. OPTIMIZATION PARAMETERS

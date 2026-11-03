@@ -29,7 +29,6 @@ println("  ✓ Generated: $(getncells(grid)) elements, $(getnnodes(grid)) nodes"
 # -----------------------------------------------------------------------------
 E0 = 1.0
 ν = 0.3
-material_model = create_simp_material_model(E0, ν, 1e-9, 3.0)
 
 println("\nMaterial properties:")
 println("  E₀ = $E0")
@@ -39,7 +38,7 @@ println("  ν = $ν")
 # 3. FEM SETUP
 # -----------------------------------------------------------------------------
 println("\nSetting up FEM problem...")
-dh, cellvalues, K, f = setup_problem(grid)
+dh, cellvalues = setup_problem(grid)
 println("  ✓ DOFs: $(ndofs(dh))")
 
 # -----------------------------------------------------------------------------
@@ -116,7 +115,6 @@ mkpath(results_dir)
 
 export_boundary_conditions(
     grid,
-    dh,
     fixed_nodes,
     force_nodes,
     joinpath(results_dir, "boundary_conditions"),
@@ -128,20 +126,10 @@ println("  ✓ Saved: boundary_conditions.vtu")
 # -----------------------------------------------------------------------------
 println("\nApplying boundary conditions...")
 
-assemble_stiffness_matrix_simp!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    fill(0.4, getncells(grid)),
-)
-
-ch_fixed = apply_fixed_boundary!(K, f, dh, fixed_nodes)
+ch_fixed = create_constraint_handler(dh, fixed_nodes)
 println("  ✓ Fixed support: $(length(fixed_nodes)) nodes")
 
 # Force in -Z direction (total force = -1.0)
-apply_force!(f, dh, collect(force_nodes), [0.0, 0.0, -1.0])
 println("  ✓ Applied force: [0, 0, -1] N")
 
 # -----------------------------------------------------------------------------

@@ -34,10 +34,10 @@ The package exports the following symbols, grouped by module:
 | Group | Exported symbols |
 |-------|------------------|
 | Mesh import | `import_mesh` |
-| FEM setup & material | `setup_problem`, `create_material_model`, `create_simp_material_model`, `assemble_stiffness_matrix_simp!` |
-| Boundary conditions | `apply_fixed_boundary!`, `apply_sliding_boundary!` |
+| FEM setup & material | `setup_problem`, `create_simp_material_model`, `assemble_stiffness_matrix_simp!` |
+| Boundary conditions | `create_constraint_handler` |
 | Forces | `apply_force!`, `apply_surface_traction!`, `get_boundary_facets` |
-| Node selection | `select_nodes_by_plane`, `select_nodes_by_circle`, `select_nodes_by_cylinder`, `select_nodes_by_arc` |
+| Node selection | `select_nodes`, `select_nodes_by_plane`, `select_nodes_by_circle`, `select_nodes_by_cylinder`, `select_nodes_by_arc` |
 | Optimization | `simp_optimize`, `OptimizationParameters` |
 | Load conditions | `AbstractLoadCondition`, `PointLoad`, `SurfaceTractionLoad` |
 | Filter cache (advanced) | `FilterCache`, `create_filter_cache` |
@@ -57,8 +57,8 @@ simp_optimize(grid, dh, cellvalues, forces, boundary_conditions, params, acceler
 - `grid::Grid`: Ferrite Grid object containing the mesh
 - `dh::DofHandler`: Degree of freedom handler from Ferrite
 - `cellvalues`: CellValues for finite element integration
-- `forces`: Vector of load conditions - either `AbstractLoadCondition` types (`PointLoad`, `SurfaceTractionLoad`) or legacy tuples `(dh, node_indices, force_vector)`
-- `boundary_conditions`: Vector of constraint handlers (fixed or sliding)
+- `forces`: Vector of load conditions (`PointLoad`, `SurfaceTractionLoad`)
+- `boundary_conditions`: Vector of constraint handlers from `create_constraint_handler` (fixed or sliding)
 - `params::OptimizationParameters`: Configuration options
 - `acceleration_data`: Optional tuple `(acceleration_vector, base_density)` for body forces
 
@@ -83,11 +83,13 @@ params = OptimizationParameters(;
     filter_type = :sensitivity,            # Filter type: :sensitivity or :density
     move_limit = 0.2,                      # Maximum density change per iteration
     damping = 0.5,                         # Optimality criteria damping factor
+    adaptive_move = false,                 # Per-element move limits (body forces)
     use_cache = true,                      # Enable performance caching
     export_interval = 0,                   # Export every N iterations (0 = disabled)
     export_path = "",                      # Path for intermediate results
     task_name = "SIMP_Optimization",       # Name for logging files
-    tolerance_checkpoints = Float64[]      # Extra tolerances to export at (multi-tol study)
+    tolerance_checkpoints = Float64[],     # Extra tolerances to export at (multi-tol study)
+    rho_lin = 0.0                          # Linear stiffness below this density (body forces)
 )
 ```
 
@@ -117,17 +119,14 @@ grid = generate_grid(Hexahedron, (60, 20, 4),  # nelements: (nx, ny, nz)
                      Vec((60.0, 20.0, 4.0)))   # upper corner
 
 # 2. Setup FEM problem
-dh, cellvalues, K, f = setup_problem(grid)
+dh, cellvalues = setup_problem(grid)
 
 # 3. Define boundary conditions
 fixed_nodes = select_nodes_by_plane(grid, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1e-3) # point, normal, tol
 force_nodes = select_nodes_by_circle(grid, [60.0, 0.0, 2.0], [1.0, 0.0, 0.0], 1.0) # center, normal, radius
 
 # 4. Apply boundary conditions
-material_model = create_simp_material_model(200.0, 0.3, 1e-6, 3.0) # E0, ν, Emin, p
-assemble_stiffness_matrix_simp!(K, f, dh, cellvalues, material_model, 
-                                fill(0.4, getncells(grid)))
-ch_fixed = apply_fixed_boundary!(K, f, dh, fixed_nodes)
+ch_fixed = create_constraint_handler(dh, fixed_nodes) # all DOFs fixed
 
 # 5. Configure optimization
 opt_params = OptimizationParameters(

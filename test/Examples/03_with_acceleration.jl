@@ -58,7 +58,6 @@ println("  ✓ Generated: $(getncells(grid)) elements, $(getnnodes(grid)) nodes"
 E0 = 2.4e3          # Young's modulus [MPa] = [N/mm²]
 ν = 0.35            # Poisson's ratio
 ρ = 1.04e-6         # Density [kg/mm³]
-material_model = create_simp_material_model(E0, ν, 1e-6, 3.0)
 
 println("Material properties:")
 println("  E₀ = $(E0/1e3) GPa")
@@ -69,7 +68,7 @@ println("  ρ = $ρ kg/mm³")
 # 3. FEM SETUP
 # -----------------------------------------------------------------------------
 println("\nSetting up FEM problem...")
-dh, cellvalues, K, f = setup_problem(grid)
+dh, cellvalues = setup_problem(grid)
 println("  ✓ DOFs: $(ndofs(dh))")
 
 # -----------------------------------------------------------------------------
@@ -115,21 +114,10 @@ if isempty(force_nodes)
 end
 println("  ✓ Force nodes: $(length(force_nodes))")
 
-# Assemble and apply boundary conditions
-assemble_stiffness_matrix_simp!(
-    K,
-    f,
-    dh,
-    cellvalues,
-    material_model,
-    fill(0.4, getncells(grid)),
-)
+# Apply boundary conditions
+ch_sliding = create_constraint_handler(dh, sliding_nodes, [1])
+ch_support = create_constraint_handler(dh, support_nodes, [2])
 
-ch_sliding = apply_sliding_boundary!(K, f, dh, sliding_nodes, [1])
-ch_support = apply_sliding_boundary!(K, f, dh, support_nodes, [2])
-
-# Apply point force
-apply_force!(f, dh, collect(force_nodes), [0.0, -1000.0, 0.0])  # 1000 N downward
 println("  ✓ Point force: 1000 N")
 
 # -----------------------------------------------------------------------------
