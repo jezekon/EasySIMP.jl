@@ -71,31 +71,19 @@ end
 # =============================================================================
 
 """
-    print_filter_info(grid, filter_radius_ratio, filter_type="auto")
+    print_filter_info(grid, filter_radius_ratio)
 
 Print filter settings information.
 """
-function print_filter_info(
-    grid::Grid,
-    filter_radius_ratio::Float64,
-    filter_type::String = "auto",
-)
-    char_size = estimate_element_size(grid)
+function print_filter_info(grid::Grid, filter_radius_ratio::Float64)
     element_sizes = calculate_element_sizes(grid)
+    char_size = estimate_element_size(grid)
     size_variation = maximum(element_sizes) / minimum(element_sizes)
 
-    cell = getcells(grid, 1)
-    cell_type = cell isa Ferrite.Tetrahedron ? "Tetrahedron" : "Hexahedron"
-
-    println("Sensitivity filter information:")
-    println("  Element type: $cell_type")
+    println("Filter information:")
+    println("  Element type: $(nameof(getcelltype(grid)))")
     println("  Characteristic element size: $(round(char_size, digits=4))")
     println("  Element size variation: $(round(size_variation, digits=2))")
     println("  Filter radius ratio: $filter_radius_ratio")
     println("  Actual filter radius: $(round(filter_radius_ratio * char_size, digits=4))")
-
-    actual_type =
-        filter_type == "auto" ? (size_variation > 1.5 ? "adaptive" : "uniform") :
-        filter_type
-    println("  Filter type: $actual_type")
 end

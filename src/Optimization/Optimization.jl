@@ -261,7 +261,7 @@ function simp_optimize(
 
     # Create FilterCache - KD-tree built ONCE
     filter_cache = create_filter_cache(grid, params.filter_radius, element_volumes)
-    print_filter_info(grid, params.filter_radius, "auto")
+    print_filter_info(grid, params.filter_radius)
 
     # Volume sensitivities: chain-rule transform once (geometry-only, constant across iterations)
     volume_sens_physical = element_volumes ./ total_volume

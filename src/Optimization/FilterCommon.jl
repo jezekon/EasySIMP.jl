@@ -108,14 +108,8 @@ Characteristic element size: mean of the element sizes of all cells. (A sample o
 first cells would make the filter radius depend on the cell order of unstructured meshes.)
 """
 function estimate_element_size(grid::Grid)
-    total_size = 0.0
-
-    for cell_idx = 1:getncells(grid)
-        coords = getcoordinates(grid, cell_idx)
-        total_size += calculate_single_element_size(coords)
-    end
-
-    return total_size / getncells(grid)
+    # Summed in cell order with foldl; the pairwise `sum` would change the last bits of R
+    return foldl(+, calculate_element_sizes(grid)) / getncells(grid)
 end
 
 """
