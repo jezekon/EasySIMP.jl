@@ -14,14 +14,10 @@ export optimality_criteria_update, check_sensitivity_health
 
 Check if sensitivities are in a reasonable range for OC algorithm.
 Uses relative thresholds (median-based) instead of absolute values.
-Warns user only if problems are detected.
+Warns user only if problems are detected. The sign is not checked: with a body force
+many sensitivities are positive (see `calculate_sensitivities!`).
 """
 function check_sensitivity_health(sensitivities::Vector{Float64})
-    if count(s -> s < 0, sensitivities) < length(sensitivities) * 0.5
-        @warn "Less than 50% of sensitivities are negative. Check if energy sensitivities are computed correctly."
-        return false
-    end
-
     abs_sens = abs.(sensitivities)
     med = median(abs_sens)
 
