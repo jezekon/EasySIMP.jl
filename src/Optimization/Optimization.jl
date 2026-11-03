@@ -192,9 +192,13 @@ function simp_optimize(
         logger = OptimizationLogger(params.export_path, params.task_name)
     end
 
+    # Body-force vectors for unit element density: f_e = ρ_e g_e enters the sensitivity
+    unit_body_forces = nothing
     if acceleration_data !== nothing
         acceleration_vector, base_density = acceleration_data
         print_info("Variable density acceleration enabled: $(acceleration_vector)")
+        unit_body_forces =
+            calculate_unit_body_force_vectors(dh, cellvalues, acceleration_vector .* base_density)
     end
 
     # =========================================================================
@@ -335,7 +339,8 @@ function simp_optimize(
             params.E0,
             params.Emin,
             params.ν,
-            params.p,
+            params.p;
+            unit_body_forces = unit_body_forces,
         )
 
         # Filter sensitivities

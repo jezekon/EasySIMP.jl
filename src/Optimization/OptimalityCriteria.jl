@@ -100,8 +100,9 @@ function optimality_criteria_update(
 
         # Update densities using Sigmund's OC formula
         for i = 1:n_elements
-            # Optimality ratio: Be = |dc/dx| / (λ * dV/dx)
-            Be = abs(sensitivities[i]) / (λ_mid * volume_sensitivities[i])
+            # Optimality ratio: Be = -dc/dx / (λ * dV/dx). Design-dependent loads can make
+            # dc/dx positive; such cells are only reduced (Be = 0), never grown.
+            Be = max(0.0, -sensitivities[i]) / (λ_mid * volume_sensitivities[i])
 
             # Update with damping
             optimality_ratio = densities[i] * (Be^damping)

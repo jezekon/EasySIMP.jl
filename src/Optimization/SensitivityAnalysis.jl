@@ -27,6 +27,8 @@ Calculate sensitivities in-place without allocations (use in optimization loop).
 - `Emin`: Minimum Young's modulus
 - `ν`: Poisson's ratio
 - `p`: Penalization power
+- `unit_body_forces`: Optional element body-force vectors g_e for unit density (design-
+  dependent load f_e = ρ_e g_e). Adds the load term 2 u_eᵀ g_e of dc/dρ_e.
 """
 function calculate_sensitivities!(
     sensitivities::Vector{Float64},
@@ -38,7 +40,8 @@ function calculate_sensitivities!(
     E0::Float64,
     Emin::Float64,
     ν::Float64,
-    p::Float64,
+    p::Float64;
+    unit_body_forces = nothing,
 )
     # Lamé parameters for unit Young's modulus
     λ0 = ν / ((1 + ν) * (1 - 2ν))
@@ -76,6 +79,11 @@ function calculate_sensitivities!(
         # Energy sensitivity: ∂c/∂ρ = -∂E/∂ρ * u^T * k_unit * u
         u_elem = @view u[cell_dofs]
         sensitivities[cell_id] = -dE_drho * dot(u_elem, ke_unit * u_elem)
+
+        # Design-dependent body force f_e = ρ_e g_e: ∂c/∂ρ += 2 u^T g_e
+        if unit_body_forces !== nothing
+            sensitivities[cell_id] += 2.0 * dot(u_elem, unit_body_forces[cell_id])
+        end
     end
 end
 
@@ -117,7 +125,8 @@ function calculate_sensitivities(
     E0::Float64,
     Emin::Float64,
     ν::Float64,
-    p::Float64,
+    p::Float64;
+    unit_body_forces = nothing,
 )
     n_cells = getncells(grid)
     sensitivities = zeros(n_cells)
@@ -131,7 +140,8 @@ function calculate_sensitivities(
         E0,
         Emin,
         ν,
-        p,
+        p;
+        unit_body_forces = unit_body_forces,
     )
     return sensitivities
 end

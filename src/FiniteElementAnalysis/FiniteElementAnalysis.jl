@@ -10,6 +10,7 @@ export create_material_model,
     setup_problem,
     get_node_dofs,
     apply_variable_density_volume_force!,
+    calculate_unit_body_force_vectors,
     apply_fixed_boundary!,
     apply_sliding_boundary!,
     apply_force!,
@@ -525,6 +526,34 @@ function apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vect
 
     println("Applied variable density volume force")
     println("  Total force applied: $total_force_applied N")
+end
+
+"""
+    calculate_unit_body_force_vectors(dh, cellvalues, body_force_vector)
+
+Element body-force vectors g_e = ∫ Nᵀ b dΩ for unit element density, so that the
+design-dependent body force of a cell is ρ_e g_e. Used for the body-force term of
+the compliance sensitivity.
+"""
+function calculate_unit_body_force_vectors(dh, cellvalues, body_force_vector)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    unit_vectors = [zeros(n_basefuncs) for _ = 1:getncells(dh.grid)]
+
+    for cell in CellIterator(dh)
+        reinit!(cellvalues, cell)
+        ge = unit_vectors[cellid(cell)]
+
+        for q_point = 1:getnquadpoints(cellvalues)
+            dΩ = getdetJdV(cellvalues, q_point)
+            for i = 1:n_basefuncs
+                dof_component = mod(i - 1, 3) + 1
+                N_scalar = shape_value(cellvalues, q_point, i)[dof_component]
+                ge[i] += body_force_vector[dof_component] * N_scalar * dΩ
+            end
+        end
+    end
+
+    return unit_vectors
 end
 
 # =============================================================================
