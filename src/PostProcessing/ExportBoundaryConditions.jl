@@ -1,12 +1,11 @@
 """
-    export_boundary_conditions(grid::Grid, dh::DofHandler, fixed_nodes::Set{Int}, 
+    export_boundary_conditions(grid::Grid, fixed_nodes::Set{Int}, 
                               force_nodes::Set{Int}, output_file::String)
 
 Exports a mesh with marked boundary conditions to a VTU file.
 
 Parameters:
 - `grid`: Computational mesh
-- `dh`: DofHandler from the problem setup
 - `fixed_nodes`: Set of node IDs with fixed boundary conditions
 - `force_nodes`: Set of node IDs with applied forces
 - `output_file`: Path to the output file (without extension)
@@ -14,7 +13,6 @@ Parameters:
 
 function export_boundary_conditions(
     grid::Ferrite.Grid,
-    dh::Ferrite.DofHandler,
     fixed_nodes::Set{Int},
     force_nodes::Set{Int},
     output_file::String,
@@ -54,8 +52,8 @@ function export_boundary_conditions(
     for cell_idx = 1:getncells(grid)
         cell = getcells(grid, cell_idx)
 
-        # Get all faces of the cell
-        cell_faces = get_faces(cell)
+        # Get all faces of the cell (node IDs in Ferrite's facet numbering)
+        cell_faces = [collect(face_nodes) for face_nodes in Ferrite.facets(cell)]
 
         for face in cell_faces
             # Check if all nodes on the face have the same boundary condition type
@@ -99,24 +97,3 @@ function export_boundary_conditions(
     println("Boundary conditions successfully exported to $(output_file).vtu")
 end
 
-
-# Helper function to get the faces of a cell
-function get_faces(cell::Ferrite.Tetrahedron)
-    return [
-        [cell.nodes[1], cell.nodes[2], cell.nodes[3]], # face 1
-        [cell.nodes[1], cell.nodes[2], cell.nodes[4]], # face 2
-        [cell.nodes[2], cell.nodes[3], cell.nodes[4]], # face 3
-        [cell.nodes[1], cell.nodes[3], cell.nodes[4]],  # face 4
-    ]
-end
-
-function get_faces(cell::Ferrite.Hexahedron)
-    return [
-        [cell.nodes[1], cell.nodes[2], cell.nodes[3], cell.nodes[4]], # bottom face
-        [cell.nodes[5], cell.nodes[6], cell.nodes[7], cell.nodes[8]], # top face
-        [cell.nodes[1], cell.nodes[2], cell.nodes[6], cell.nodes[5]], # front face
-        [cell.nodes[2], cell.nodes[3], cell.nodes[7], cell.nodes[6]], # right face
-        [cell.nodes[3], cell.nodes[4], cell.nodes[8], cell.nodes[7]], # back face
-        [cell.nodes[4], cell.nodes[1], cell.nodes[5], cell.nodes[8]],  # left face
-    ]
-end
