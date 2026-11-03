@@ -54,7 +54,8 @@ Update design variables using the Optimality Criteria method.
 - `target_volume_fraction`: Target volume fraction
 - `total_volume`: Total volume of the design domain
 - `element_volumes`: Volume of each element
-- `move_limit`: Maximum change in density per iteration (default: 0.2)
+- `move_limit`: Maximum change in density per iteration (default: 0.2), a number or one
+  value per element
 - `damping`: Damping coefficient (default: 0.5)
 
 # Returns
@@ -73,7 +74,7 @@ function optimality_criteria_update(
     target_volume_fraction::Float64,
     total_volume::Float64,
     element_volumes::Vector{Float64},
-    move_limit::Float64 = 0.2,
+    move_limit::Union{Float64,AbstractVector{Float64}} = 0.2,
     damping::Float64 = 0.5;
     filter_cache::Union{FilterCache, Nothing} = nothing,
     use_density_filter::Bool = false,
@@ -108,12 +109,10 @@ function optimality_criteria_update(
             optimality_ratio = densities[i] * (Be^damping)
 
             # Apply move limits and bounds
+            m = move_limit isa Float64 ? move_limit : move_limit[i]
             new_densities[i] = max(
                 x_min,
-                max(
-                    densities[i] - move_limit,
-                    min(1.0, min(densities[i] + move_limit, optimality_ratio)),
-                ),
+                max(densities[i] - m, min(1.0, min(densities[i] + m, optimality_ratio))),
             )
         end
 

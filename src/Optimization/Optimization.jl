@@ -44,6 +44,10 @@ Parameters for SIMP topology optimization.
 - `filter_type`: Filter type (:sensitivity or :density)
 - `move_limit`: OC move limit
 - `damping`: OC damping coefficient
+- `adaptive_move`: Per-element move limits, adapted like the asymptotes of MMA (Svanberg
+  1987): ×0.7 when the change of ρ_e reverses its sign, ×1.2 (up to `move_limit`) when it
+  keeps it, floor 1e-3. Stops the period-two oscillation of OC under design-dependent body
+  forces (default false: fixed `move_limit`)
 - `use_cache`: Enable element matrix caching
 - `export_interval`: Export results every N iterations (0 = disabled)
 - `export_path`: Directory for intermediate results
@@ -72,6 +76,7 @@ mutable struct OptimizationParameters
     # OC parameters
     move_limit::Float64
     damping::Float64
+    adaptive_move::Bool
 
     # Performance
     use_cache::Bool
@@ -98,6 +103,7 @@ mutable struct OptimizationParameters
         filter_type = :sensitivity,
         move_limit = 0.2,
         damping = 0.5,
+        adaptive_move = false,
         use_cache = true,
         export_interval = 0,
         export_path = "",
@@ -118,6 +124,7 @@ mutable struct OptimizationParameters
             filter_type,
             move_limit,
             damping,
+            adaptive_move,
             use_cache,
             export_interval,
             export_path,
@@ -262,6 +269,10 @@ function simp_optimize(
         params.use_cache ?
         initialize_element_cache(dh, cellvalues, material_model, n_cells) : nothing
 
+    # Move limits per element (constant unless params.adaptive_move)
+    move_limits = fill(params.move_limit, n_cells)
+    previous_change = zeros(n_cells)
+
     # History tracking
     energy_history = Float64[]
     volume_history = Float64[]
@@ -376,7 +387,7 @@ function simp_optimize(
             params.volume_fraction,
             total_volume,
             element_volumes,
-            params.move_limit,
+            params.adaptive_move ? move_limits : params.move_limit,
             params.damping;
             filter_cache = filter_cache,
             use_density_filter = use_density_filter,
@@ -384,6 +395,20 @@ function simp_optimize(
 
         # Check convergence
         change = maximum(abs.(densities - old_densities))
+
+        # Adapt the move limits: shrink where the change reverses its sign (oscillation)
+        if params.adaptive_move
+            @inbounds for i = 1:n_cells
+                d = densities[i] - old_densities[i]
+                s = d * previous_change[i]
+                if s < 0
+                    move_limits[i] = max(1e-3, 0.7 * move_limits[i])
+                elseif s > 0
+                    move_limits[i] = min(params.move_limit, 1.2 * move_limits[i])
+                end
+                previous_change[i] = d
+            end
+        end
 
         # Compute logging metrics
         n_gray = count(x -> 0.1 < x < 0.9, physical_densities)
