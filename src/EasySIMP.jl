@@ -50,7 +50,7 @@ export setup_problem,
     create_material_model, create_simp_material_model, assemble_stiffness_matrix_simp!
 
 # Boundary conditions
-export apply_fixed_boundary!, apply_sliding_boundary!
+export create_constraint_handler
 
 # Force application
 export apply_force!, apply_surface_traction!, get_boundary_facets

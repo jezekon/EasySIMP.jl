@@ -11,8 +11,7 @@ export create_material_model,
     get_node_dofs,
     apply_variable_density_volume_force!,
     calculate_unit_body_force_vectors,
-    apply_fixed_boundary!,
-    apply_sliding_boundary!,
+    create_constraint_handler,
     apply_force!,
     create_simp_material_model,
     simp_interpolation,
@@ -305,47 +304,25 @@ end
 # =============================================================================
 
 """
-    apply_fixed_boundary!(K, f, dh, nodes)
+    create_constraint_handler(dh, nodes, fixed_dofs=[1, 2, 3])
 
-Apply fixed boundary conditions (all DOFs = 0) to specified nodes.
-
-# Returns
-- `ConstraintHandler` with applied constraints
-"""
-function apply_fixed_boundary!(K, f, dh, nodes)
-    dim = 3
-
-    ch = ConstraintHandler(dh)
-
-    for d = 1:dim
-        dbc = Dirichlet(:u, nodes, (x, t) -> 0.0, d)
-        add!(ch, dbc)
-    end
-
-    close!(ch)
-    update!(ch, 0.0)
-    apply!(K, f, ch)
-
-    println("Applied fixed boundary conditions to $(length(nodes)) nodes")
-    return ch
-end
-
-"""
-    apply_sliding_boundary!(K, f, dh, nodes, fixed_dofs)
-
-Apply sliding boundary conditions to specified nodes.
+Create zero-displacement boundary conditions on the specified nodes. With all three
+directions the nodes are fixed; with fewer they slide (symmetry plane, roller support).
+`simp_optimize` applies the handler to the system of every iteration.
 
 # Arguments
-- `K`: Global stiffness matrix
-- `f`: Global force vector
 - `dh`: DofHandler
 - `nodes`: Set or Array of node IDs
-- `fixed_dofs`: Array of direction indices to fix (1=X, 2=Y, 3=Z)
+- `fixed_dofs`: Array of direction indices to fix (1=X, 2=Y, 3=Z), default all
 
 # Returns
-- `ConstraintHandler` with applied constraints
+- Closed `ConstraintHandler`
 """
-function apply_sliding_boundary!(K, f, dh, nodes, fixed_dofs)
+function create_constraint_handler(dh, nodes, fixed_dofs = [1, 2, 3])
+    if isempty(nodes)
+        error("No nodes provided for boundary conditions.")
+    end
+
     ch = ConstraintHandler(dh)
 
     for d in fixed_dofs
@@ -355,9 +332,8 @@ function apply_sliding_boundary!(K, f, dh, nodes, fixed_dofs)
 
     close!(ch)
     update!(ch, 0.0)
-    apply!(K, f, ch)
 
-    println("Applied sliding boundary to $(length(nodes)) nodes, fixed DOFs: $fixed_dofs")
+    println("Boundary conditions on $(length(nodes)) nodes, fixed DOFs: $fixed_dofs")
     return ch
 end
 
