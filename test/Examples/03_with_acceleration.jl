@@ -57,12 +57,12 @@ println("  ✓ Generated: $(getncells(grid)) elements, $(getnnodes(grid)) nodes"
 # -----------------------------------------------------------------------------
 E0 = 2.4e3          # Young's modulus [MPa] = [N/mm²]
 ν = 0.35            # Poisson's ratio
-ρ = 1.04e-6         # Density [kg/mm³]
+ρ = 1.04e-9         # Density [t/mm³] (1.04 g/cm³; N, mm, MPa, t)
 
 println("Material properties:")
 println("  E₀ = $(E0/1e3) GPa")
 println("  ν = $ν")
-println("  ρ = $ρ kg/mm³")
+println("  ρ = $ρ t/mm³")
 
 # -----------------------------------------------------------------------------
 # 3. FEM SETUP
