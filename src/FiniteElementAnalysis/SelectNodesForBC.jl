@@ -1,8 +1,37 @@
 """
+    select_nodes(grid::Grid, predicate::Function)
+
+Selects nodes whose coordinates satisfy a condition. The `select_nodes_by_*`
+functions below are special cases.
+
+Parameters:
+- `grid`: Computational mesh
+- `predicate`: Function x -> Bool of the node coordinates x = [x, y, z]
+
+Returns:
+- Set of node IDs that satisfy the predicate
+
+Example:
+    # Strip y <= 1 of the end face x = 60
+    nodes = select_nodes(grid, x -> abs(x[1] - 60.0) < 1e-6 && x[2] <= 1.0 + 1e-6)
+"""
+function select_nodes(grid::Grid, predicate::Function)
+    selected_nodes = Set{Int}()
+
+    for node_id = 1:getnnodes(grid)
+        if predicate(grid.nodes[node_id].x)
+            push!(selected_nodes, node_id)
+        end
+    end
+
+    return selected_nodes
+end
+
+"""
     select_nodes_by_plane(grid::Grid, 
                           point::Vector{Float64}, 
                           normal::Vector{Float64}, 
-                          tolerance::Float64=1e-6)
+                          tolerance::Float64=1e-4)
 
 Selects nodes that lie on a plane defined by a point and normal vector.
 
@@ -24,25 +53,8 @@ function select_nodes_by_plane(
     # Normalize the normal vector
     unit_normal = normal / norm(normal)
 
-    # Extract number of nodes
-    num_nodes = getnnodes(grid)
-    selected_nodes = Set{Int}()
-
-    # Check each node
-    for node_id = 1:num_nodes
-        coord = grid.nodes[node_id].x
-
-        # Calculate distance from point to plane: d = (p - p0) · n
-        dist = abs(dot(coord - point, unit_normal))
-
-        # If distance is within tolerance, node is on plane
-        if dist < tolerance
-            push!(selected_nodes, node_id)
-        end
-    end
-
-    # println("Selected $(length(selected_nodes)) nodes on the specified plane")
-    return selected_nodes
+    # Distance from point to plane: d = (p - p0) · n
+    return select_nodes(grid, coord -> abs(dot(coord - point, unit_normal)) < tolerance)
 end
 
 """
@@ -71,31 +83,23 @@ function select_nodes_by_circle(
     radius::Float64,
     tolerance::Float64 = 1e-6,
 )
-    # First, get nodes on the plane
-    nodes_on_plane = select_nodes_by_plane(grid, center, normal, tolerance)
-
     # Normalize the normal vector
     unit_normal = normal / norm(normal)
 
-    # Initialize set for nodes in circle
-    nodes_in_circle = Set{Int}()
-
-    # Check which nodes are within the circle radius
-    for node_id in nodes_on_plane
-        coord = grid.nodes[node_id].x
-
-        # Project the vector from center to node onto the plane
+    function in_circle(coord)
         v = coord - center
-        projection = v - dot(v, unit_normal) * unit_normal
 
-        # Calculate distance from center in the plane
-        dist = norm(projection)
-
-        # If distance is less than radius, node is in the circle
-        if dist <= radius + tolerance
-            push!(nodes_in_circle, node_id)
+        # The node must lie on the plane of the circle
+        if abs(dot(v, unit_normal)) >= tolerance
+            return false
         end
+
+        # Distance from center in the plane (projection of v onto the plane)
+        projection = v - dot(v, unit_normal) * unit_normal
+        return norm(projection) <= radius + tolerance
     end
+
+    nodes_in_circle = select_nodes(grid, in_circle)
 
     println("Selected $(length(nodes_in_circle)) nodes in the circular region")
     return nodes_in_circle
@@ -128,11 +132,8 @@ function select_nodes_by_cylinder(
     tolerance::Float64 = 1e-4,
 )
     unit_axis = axis_direction / norm(axis_direction)
-    selected_nodes = Set{Int}()
 
-    for node_id = 1:getnnodes(grid)
-        coord = grid.nodes[node_id].x
-
+    function on_cylinder(coord)
         # Vector from axis point to node
         v = coord - axis_point
 
@@ -143,10 +144,10 @@ function select_nodes_by_cylinder(
         # Radial distance from axis
         radial_dist = norm(coord - proj_point)
 
-        if abs(radial_dist - radius) < tolerance
-            push!(selected_nodes, node_id)
-        end
+        return abs(radial_dist - radius) < tolerance
     end
+
+    selected_nodes = select_nodes(grid, on_cylinder)
 
     println("Selected $(length(selected_nodes)) nodes on cylinder (r = $radius)")
     return selected_nodes
@@ -184,10 +185,7 @@ function select_nodes_by_arc(
     ref_x = ref_x / norm(ref_x)
     ref_y = cross(unit_axis, ref_x)
 
-    selected_nodes = Set{Int}()
-
-    for node_id = 1:getnnodes(grid)
-        coord = grid.nodes[node_id].x
+    function on_arc(coord)
         v = coord - center
 
         # Radial vector (perpendicular to axis)
@@ -196,7 +194,7 @@ function select_nodes_by_arc(
 
         # Check if on cylinder surface
         if abs(radial_dist - radius) > tolerance
-            continue
+            return false
         end
 
         # Calculate angle
@@ -207,16 +205,14 @@ function select_nodes_by_arc(
         end
 
         # Check angle range
-        in_range = if angle_start <= angle_end
-            angle_start <= angle_deg <= angle_end
+        if angle_start <= angle_end
+            return angle_start <= angle_deg <= angle_end
         else
-            angle_deg >= angle_start || angle_deg <= angle_end
-        end
-
-        if in_range
-            push!(selected_nodes, node_id)
+            return angle_deg >= angle_start || angle_deg <= angle_end
         end
     end
+
+    selected_nodes = select_nodes(grid, on_arc)
 
     println(
         "Selected $(length(selected_nodes)) nodes on arc ($(angle_start)°-$(angle_end)°)",

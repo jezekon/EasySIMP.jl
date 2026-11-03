@@ -31,7 +31,8 @@ export setup_problem,
 
 include("SelectNodesForBC.jl")
 include("LoadConditions.jl")
-export select_nodes_by_plane,
+export select_nodes,
+    select_nodes_by_plane,
     select_nodes_by_circle, select_nodes_by_cylinder, select_nodes_by_arc
 
 # =============================================================================

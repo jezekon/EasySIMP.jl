@@ -55,7 +55,8 @@ export create_constraint_handler
 export apply_force!, apply_surface_traction!, get_boundary_facets
 
 # Node selection
-export select_nodes_by_plane,
+export select_nodes,
+    select_nodes_by_plane,
     select_nodes_by_circle, select_nodes_by_cylinder, select_nodes_by_arc
 
 # Optimization
