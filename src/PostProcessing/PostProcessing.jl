@@ -203,7 +203,7 @@ function calculate_von_mises_stresses(stress_tensors::Dict)
     for (cell_id, stress_data) in stress_tensors
         if haskey(stress_tensors, cell_id) && !isempty(stress_data)
             if stress_data isa Vector && !isempty(stress_data)
-                σ = stress_data[1]
+                σ = sum(stress_data) / length(stress_data)  # cell average over Gauss points
             else
                 σ = stress_data
             end
