@@ -492,7 +492,9 @@ function apply_variable_density_volume_force!(f, dh, cellvalues, body_force_vect
         cell_id = cellid(cell)
         density = density_data[cell_id]
 
-        if density < 1e-6
+        # Skip only empty cells. An absolute threshold on the effective density
+        # (rho_e * material density, e.g. 1e-9 t/mm^3) would drop every cell.
+        if density <= 0.0
             continue
         end
 
