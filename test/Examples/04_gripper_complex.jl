@@ -36,6 +36,7 @@
 #
 # Reference run (Julia 1.10.10, 1 thread, 1 BLAS thread):
 #   116 iterations, energy U = 0.11597536895754954 N·mm
+# This script: U = 0.11597536895867937 N·mm (facets summed in another order).
 #
 # =============================================================================
 
